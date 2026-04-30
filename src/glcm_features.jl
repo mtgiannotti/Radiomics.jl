@@ -108,6 +108,11 @@ function calculate_glcm(img,
         end
     end
 
+    if use_gpu
+        mask_d = CuArray(mask)
+        disc_d = CuArray(disc)
+        mapped_disc_d = CuArray(mapped_disc)
+    end
     @inbounds for (dir_idx, dir) in enumerate(dirs)
         """
         CartesianIndex represents a multidimensional index in Julia.
@@ -119,15 +124,31 @@ function calculate_glcm(img,
         """
         c_dir = CartesianIndex(dir)
         G = zeros(Float32, Ng, Ng)
-        for idx in CartesianIndices(disc)
-            if mask[idx]
-                nidx = idx + c_dir
-                if checkbounds(Bool, disc, nidx) && mask[nidx]
-                    i = mapped_disc[idx]
-                    j = mapped_disc[nidx]
-                    # Symmetrize the GLCM
-                    G[i, j] += 1.0f0
-                    G[j, i] += 1.0f0
+        if use_gpu
+            G_d = CuArray(G)
+
+            threads = (8, 8, 8)
+            blocks = (
+                cld(size(disc, 1), 8),
+                cld(size(disc, 2), 8),
+                cld(size(disc, 3), 8)
+            )
+            @cuda threads = threads blocks = blocks glcm_kernel!(G_d, mask_d, disc_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d)
+
+            CUDA.synchronize()
+
+            G = Array(G_d)
+        else
+            for idx in CartesianIndices(disc)
+                if mask[idx]
+                    nidx = idx + c_dir
+                    if checkbounds(Bool, disc, nidx) && mask[nidx]
+                        i = mapped_disc[idx]
+                        j = mapped_disc[nidx]
+                        # Symmetrize the GLCM
+                        G[i, j] += 1.0f0
+                        G[j, i] += 1.0f0
+                    end
                 end
             end
         end
@@ -160,6 +181,32 @@ function calculate_glcm(img,
     end
 
     return glcm_matrices, gray_levels, bin_width_used
+end
+
+function glcm_kernel!(G, mask, disc, dir_i, dir_j, dir_k, mapped_disc)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    j = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+    k = threadIdx().z + (blockIdx().z - 1) * blockDim().z
+
+    if i <= size(disc, 1) && j <= size(disc, 2) && k <= size(disc, 3)
+        if mask[i, j, k]
+            nidx_i = i + dir_i
+            nidx_j = j + dir_j
+            nidx_k = k + dir_k
+            if 1 <= nidx_i <= size(mapped_disc, 1) &&
+               1 <= nidx_j <= size(mapped_disc, 2) &&
+               1 <= nidx_k <= size(mapped_disc, 3)
+                if mask[nidx_i, nidx_j, nidx_k]
+                    a = mapped_disc[i, j, k]
+                    b = mapped_disc[nidx_i, nidx_j, nidx_k]
+                    CUDA.@atomic G[a, b] += 1.0f0
+                    CUDA.@atomic G[b, a] += 1.0f0
+                end
+            end
+        end
+    end
+
+    return nothing
 end
 
 """
