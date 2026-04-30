@@ -26,9 +26,23 @@ function calculate_glcm(img,
     n_bins::Union{Int,Nothing}=nothing,
     bin_width::Union{Float64,Nothing}=nothing,
     weighting_norm::Union{String,Nothing}=nothing,
+    use_gpu::Bool=false,
     verbose::Bool=false)
 
     disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+
+    println(use_gpu)
+
+    if use_gpu
+        """ 
+            The current implementation of discretize_image_gpu does not affect performance
+            It has been used to measure the impact of data transfer times between the CPU and GPU and vice versa, which are negligible
+            so far with the image and mask used for testing
+        """
+        disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(CuArray(img), CuArray(mask); n_bins=n_bins, bin_width=bin_width)
+    else
+        disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+    end
 
     dim = ndims(disc)
     dirs = if dim == 2
@@ -41,7 +55,7 @@ function calculate_glcm(img,
             (0, 1, 1), (0, 1, -1), (1, 1, 1), (1, 1, -1),
             (1, -1, 1), (-1, 1, 1)
         ]
-        
+
     end
 
     if verbose
@@ -57,7 +71,7 @@ function calculate_glcm(img,
         println("Intensity Range: [$(minimum(img[mask])), $(maximum(img[mask]))]")
         println("Effective gray level utilized: $(n_levels)")
         println(dim == 2 ? "2D image detected. Using $(length(dirs)) directions." :
-                           "3D image detected. Using $(length(dirs)) directions.")
+                "3D image detected. Using $(length(dirs)) directions.")
         if weighting_norm !== nothing
             println("Weighting norm applied: $(weighting_norm)")
         end
@@ -332,7 +346,7 @@ function extract_glcm_features(glcm::Matrix{Float32}, gray_levels::Vector{Int})
                 idm += p / (1.0f0 + d2)
                 id += p / (1.0f0 + absd)
                 idmn += p / (1.0f0 + (absd / ng)^2)
-                idn  += p / (1.0f0 + absd / ng)
+                idn += p / (1.0f0 + absd / ng)
 
                 # Inverse variance
                 if i != j
@@ -345,7 +359,7 @@ function extract_glcm_features(glcm::Matrix{Float32}, gray_levels::Vector{Int})
                 # Populate marginal distributions using gray level VALUES
                 diff_val = abs(gray_levels[i] - gray_levels[j])
                 sum_val = gray_levels[i] + gray_levels[j]
-                p_xminusy[diff_val + 1] += p
+                p_xminusy[diff_val+1] += p
                 p_xplusy[sum_val] += p
 
                 # Accumulate diff_avg in the same pass (avoids a second i×j loop)
@@ -496,6 +510,7 @@ function get_glcm_features(img, mask, voxel_spacing;
     bin_width::Union{Float64,Nothing}=nothing,
     weighting_norm::Union{String,Nothing}=nothing,
     get_raw_matrices::Bool=false,
+    use_gpu::Bool=false,
     verbose::Bool=false)
 
     # Ensure spacing is Float32 and has the right length for the image dimensionality
@@ -505,9 +520,10 @@ function get_glcm_features(img, mask, voxel_spacing;
         n_bins=n_bins,
         bin_width=bin_width,
         weighting_norm=weighting_norm,
+        use_gpu=use_gpu,
         verbose=verbose)
 
-    features = Dict{String, Any}()
+    features = Dict{String,Any}()
 
     if isempty(glcm_matrices)
         return features

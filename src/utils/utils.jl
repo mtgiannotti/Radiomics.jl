@@ -1,3 +1,44 @@
+function bounding_box(img, mask, verbose::Bool)
+    idx = findall(mask .== 1)
+    index_boundaries = [
+        typemax(Int), typemin(Int),
+        typemax(Int), typemin(Int),
+        typemax(Int), typemin(Int)
+    ] # in order: [top, bottom, left, right, front, back]
+    for i in idx
+        if i[1] < index_boundaries[1]
+            index_boundaries[1] = i[1]
+        end
+        if i[1] > index_boundaries[2]
+            index_boundaries[2] = i[1]
+        end
+        if i[2] < index_boundaries[3]
+            index_boundaries[3] = i[2]
+        end
+        if i[2] > index_boundaries[4]
+            index_boundaries[4] = i[2]
+        end
+        if i[3] < index_boundaries[5]
+            index_boundaries[5] = i[3]
+        end
+        if i[3] > index_boundaries[6]
+            index_boundaries[6] = i[3]
+        end
+    end
+    reduced_img = img[index_boundaries[1]:index_boundaries[2], index_boundaries[3]:index_boundaries[4], index_boundaries[5]:index_boundaries[6]]
+    reduced_mask = mask[index_boundaries[1]:index_boundaries[2], index_boundaries[3]:index_boundaries[4], index_boundaries[5]:index_boundaries[6]]
+    if verbose
+        img_size = size(reduced_img)
+        mask_size = size(reduced_mask)
+        ct_voxels = prod(img_size)
+        mask_voxels = sum(reduced_mask .== 1)
+
+        println("Image data: $img_size | $ct_voxels")
+        println("Mask data: $mask_size | $mask_voxels")
+    end
+    return reduced_img, reduced_mask
+end
+
 """
     label_components(mask::AbstractArray{Bool})
 
@@ -327,9 +368,9 @@ end
         - `features`: A dictionary of features to print.
         # Returns:
         - Nothing. Prints the features to the console."""
-function print_features(title::String, features::Dict{String,Any}; log_buffer::Union{Vector{String}, Nothing}=nothing)
+function print_features(title::String, features::Dict{String,Any}; log_buffer::Union{Vector{String},Nothing}=nothing)
     output = String[]
-    
+
     push!(output, "\n--- $title ---")
     sorted_keys = sort(collect(keys(features)))
     for (i, k) in enumerate(sorted_keys)
@@ -337,7 +378,7 @@ function print_features(title::String, features::Dict{String,Any}; log_buffer::U
     end
     push!(output, "Subtotal: $(length(features)) features")
     push!(output, "---------------------\n")
-    
+
     if isnothing(log_buffer)
         for line in output
             println(line)
@@ -383,7 +424,7 @@ end
         - `bin_width`: The width of each bin (Float64).
         # Returns:
         - Nothing. Prints a warning if the binning parameters are invalid."""
-function  validate_binning_parameters(img_input, mask_input, bin_width)
+function validate_binning_parameters(img_input, mask_input, bin_width)
 
     # Calculate range and estimated number of bins
     roi_vals = img_input[mask_input.!=0]
@@ -416,7 +457,7 @@ function extract_and_check_mask(mask_input, label::Int)
     if voxel_count == 0
         @warn "Label $label not found in mask (no voxels with this value). Skipping."
     end
-    
+
     return mask_to_use, voxel_count
 
 end
