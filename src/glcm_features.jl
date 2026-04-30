@@ -31,19 +31,6 @@ function calculate_glcm(img,
 
     disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
 
-    println(use_gpu)
-
-    if use_gpu
-        """ 
-            The current implementation of discretize_image_gpu does not affect performance
-            It has been used to measure the impact of data transfer times between the CPU and GPU and vice versa, which are negligible
-            so far with the image and mask used for testing
-        """
-        disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(CuArray(img), CuArray(mask); n_bins=n_bins, bin_width=bin_width)
-    else
-        disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
-    end
-
     dim = ndims(disc)
     dirs = if dim == 2
         [(1, 0), (0, 1), (1, 1), (1, -1)]
