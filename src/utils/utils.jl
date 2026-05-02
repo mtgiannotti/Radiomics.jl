@@ -1,4 +1,25 @@
+"""
+    bounding_box(img, mask, verbose::Bool)
+
+    Computes the bounding box of a binary mask
+
+    The function returns the smallest region that contains all elements of mask equal to 1. The bounding box is defined by the minimum and maximum indices
+
+    # Arguments:
+        - `img`: The input image.
+        - `mask`: The mask defining the region of interest.
+        - `verbose`: If true, prints progress messages.
+
+    # Returns:
+        - `cropped_img`: an array restricted to the bounding box of the mask
+        - `cropped_mask` an array corresponding to the same bounding box
+"""
+
 function bounding_box(img, mask, verbose::Bool)
+    if verbose
+        println("Calculating the bounding box")
+        println("Image data: $(size(img)) | $(prod(size(img))) voxels\nMask data: $(size(mask .== 1)) | $(count(mask .== 1)) voxels")
+    end
     idx = findall(mask .== 1)
     index_boundaries = [
         typemax(Int), typemin(Int),
@@ -25,18 +46,16 @@ function bounding_box(img, mask, verbose::Bool)
             index_boundaries[6] = i[3]
         end
     end
-    reduced_img = img[index_boundaries[1]:index_boundaries[2], index_boundaries[3]:index_boundaries[4], index_boundaries[5]:index_boundaries[6]]
-    reduced_mask = mask[index_boundaries[1]:index_boundaries[2], index_boundaries[3]:index_boundaries[4], index_boundaries[5]:index_boundaries[6]]
+    cropped_img = img[index_boundaries[1]:index_boundaries[2], index_boundaries[3]:index_boundaries[4], index_boundaries[5]:index_boundaries[6]]
+    cropped_mask = mask[index_boundaries[1]:index_boundaries[2], index_boundaries[3]:index_boundaries[4], index_boundaries[5]:index_boundaries[6]]
     if verbose
-        img_size = size(reduced_img)
-        mask_size = size(reduced_mask)
+        img_size = size(cropped_img)
         ct_voxels = prod(img_size)
-        mask_voxels = sum(reduced_mask .== 1)
+        image_crop_perc = 100 - prod(img_size) / prod(size(img)) * 100
 
-        println("Image data: $img_size | $ct_voxels")
-        println("Mask data: $mask_size | $mask_voxels")
+        println("Cropped image data: $img_size | $ct_voxels voxels | $(round(image_crop_perc, digits=2))% reduction ")
     end
-    return reduced_img, reduced_mask
+    return cropped_img, cropped_mask
 end
 
 """

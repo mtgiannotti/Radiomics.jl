@@ -109,8 +109,23 @@ function calculate_glcm(img,
     end
 
     if use_gpu
+        if verbose
+            println("Allocating resources to the GPU...")
+        end
         mask_d = CuArray(mask)
         mapped_disc_d = CuArray(mapped_disc)
+        G_d = CUDA.zeros(Float32, Ng, Ng)
+
+        threads = (8, 8, 8)
+        blocks = (
+            cld(size(disc, 1), 8),
+            cld(size(disc, 2), 8),
+            cld(size(disc, 3), 8)
+        )
+        mdx, mdy, mdz = size(mapped_disc)
+        if verbose
+            println("Calculating G matrix on the GPU...")
+        end
     end
     @inbounds for (dir_idx, dir) in enumerate(dirs)
         """
@@ -124,17 +139,8 @@ function calculate_glcm(img,
         c_dir = CartesianIndex(dir)
         G = zeros(Float32, Ng, Ng)
         if use_gpu
-            G_d = CuArray(G)
-
-            threads = (8, 8, 8)
-            blocks = (
-                cld(size(disc, 1), 8),
-                cld(size(disc, 2), 8),
-                cld(size(disc, 3), 8)
-            )
-            mdx, mdy, mdz = size(mapped_disc)
-            @cuda threads = threads blocks = blocks shmem=Ng*Ng*sizeof(Float32) glcm_kernel!(G_d, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
-
+            fill!(G_d, 0.0f0)
+            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G_d, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
             CUDA.synchronize()
             G = Array(G_d)
         else
@@ -183,14 +189,40 @@ function calculate_glcm(img,
 end
 
 """
-    - Shared memory notes:
-        use the macro @cuStaticSharedMem if memory is known at compile time, otherwise use @cuDynamicSharedMem.
-        In this case, the shape and size are given by the number of gray levels Ng which are only known at runtime.
-    !IMPORTANT:
-        shared memory is much faster than global memory but limited in size, we need to implement safety checks to make sure that the allocated
-        amount of memory (Ng*Ng*4) is not greater than the maximum that CUDA allows
-        
-    according to the benchmark, the current implementation can be improved further as around 20% of runtime is being spent garbage collecting
+    glcm_kernel!(G::CuArray{Float32}, mask::CuArray, 
+                dir_i::Int, dir_j::Int, 
+                dir_k::Int, mapped_disc::CuArray, 
+                Ng::Int)
+    
+    Calculates the G matrix on the GPU.
+    You can specify THREAD_PER_BLOCK, but exceeding device limits will prevent kernel from launching and having too many threads might lead to inefficient memory access due to lower data density.
+
+    # Arguments:
+        - `G`: The G matrix as Float32 array intialized to zero
+        - `mask`: The mask defining the region of interest transfered to the GPU as CuArray
+        - `dir_i`, `dir_j`, `dir_k`: offsets along each axis
+        - `mapped_disc`: 
+        - `Ng`: number of gray levels as Int
+        - `mdx`, `mdy`, `mdz`: dimensions of `mapped_disc`
+
+    # Returns:
+        - `nothing`: GPU kernels are expected to return `nothing` in CUDA.jl
+
+    # Usage: 
+        threads = (THREAD_PER_BLOCK, THREAD_PER_BLOCK, THREAD_PER_BLOCK)
+        blocks = (
+            cld(size(disc, 1), THREAD_PER_BLOCK),
+            cld(size(disc, 2), THREAD_PER_BLOCK),
+            cld(size(disc, 3), THREAD_PER_BLOCK)
+        )
+        mdx, mdy, mdz = size(mapped_disc)
+        @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz, Ng)
+        - `disc`: discretized image
+
+    # Notes:
+        - Use the macro @cuStaticSharedMem if memory is known at compile time, otherwise use @cuDynamicSharedMem
+        - Currently, the amount of shared memory allocated is `Ng` * `Ng` * sizeof(Float32) (4 bytes per element). Since `Ng` is calculated at runtime, dynamic shared memory is required
+        - Shared memory is much faster than global memory but limited in size
 """
 function glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz, Ng)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
@@ -206,7 +238,7 @@ function glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz, 
     tid = threadIdx().x + (threadIdx().y - 1) * blockDim().x + (threadIdx().z - 1) * blockDim().x * blockDim().y
 
     # initializes shared resource
-    for idx = tid:total_threads:(Ng * Ng)
+    for idx = tid:total_threads:(Ng*Ng)
         shared_G[idx] = 0.0f0
     end
 
@@ -235,7 +267,7 @@ function glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz, 
     sync_threads()
 
     # calculates final values of G block by block
-    for idx = tid:total_threads:(Ng * Ng)
+    for idx = tid:total_threads:(Ng*Ng)
         linear = idx - 1
         ii = (linear % Ng) + 1
         jj = (linear ÷ Ng) + 1
