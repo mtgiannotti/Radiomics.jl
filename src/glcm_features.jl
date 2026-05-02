@@ -133,7 +133,7 @@ function calculate_glcm(img,
                 cld(size(disc, 3), 8)
             )
             mdx, mdy, mdz = size(mapped_disc)
-            @cuda threads = threads blocks = blocks glcm_kernel!(G_d, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz)
+            @cuda threads = threads blocks = blocks shmem=Ng*Ng*sizeof(Float32) glcm_kernel!(G_d, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
 
             CUDA.synchronize()
             G = Array(G_d)
@@ -182,31 +182,64 @@ function calculate_glcm(img,
     return glcm_matrices, gray_levels, bin_width_used
 end
 
-function glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz)
-    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-    j = threadIdx().y + (blockIdx().y - 1) * blockDim().y
-    k = threadIdx().z + (blockIdx().z - 1) * blockDim().z
+"""
+    - Shared memory notes:
+        use the macro @cuStaticSharedMem if memory is known at compile time, otherwise use @cuDynamicSharedMem.
+        In this case, the shape and size are given by the number of gray levels Ng which are only known at runtime.
+    !IMPORTANT:
+        shared memory is much faster than global memory but limited in size, we need to implement safety checks to make sure that the allocated
+        amount of memory (Ng*Ng*4) is not greater than the maximum that CUDA allows
+        
+    according to the benchmark, the current implementation can be improved further as around 20% of runtime is being spent garbage collecting
+"""
+function glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz, Ng)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    j = (blockIdx().y - 1) * blockDim().y + threadIdx().y
+    k = (blockIdx().z - 1) * blockDim().z + threadIdx().z
+
+    # allocates dynamic shared memory of size Ng*Ng
+    shared_G = @cuDynamicSharedMem(Float32, Ng * Ng)
+    shared_G = reshape(shared_G, Ng, Ng)
+
+    total_threads = blockDim().x * blockDim().y * blockDim().z
+    # maps 3D thread coordinates to a 1D index
+    tid = threadIdx().x + (threadIdx().y - 1) * blockDim().x + (threadIdx().z - 1) * blockDim().x * blockDim().y
+
+    # initializes shared resource
+    for idx = tid:total_threads:(Ng * Ng)
+        shared_G[idx] = 0.0f0
+    end
+
+    sync_threads()
 
     if i <= mdx && j <= mdy && k <= mdz
         if mask[i, j, k]
-            #=   
-                replaced CartesianIndex() and CartesianIndices() with manual indexing, as they perform poorly on the GPU and could potentially
-            =#
             nidx_i = i + dir_i
             nidx_j = j + dir_j
             nidx_k = k + dir_k
-            # this conditional statement is the equivalent of checkbounds() in the CPU version, checkbounds() is not natively supported in CUDA.jl
             if 1 <= nidx_i <= mdx &&
                1 <= nidx_j <= mdy &&
                1 <= nidx_k <= mdz
                 if mask[nidx_i, nidx_j, nidx_k]
                     a = mapped_disc[i, j, k]
                     b = mapped_disc[nidx_i, nidx_j, nidx_k]
-                    CUDA.@atomic G[a, b] += 1.0f0
-                    CUDA.@atomic G[b, a] += 1.0f0
+                    if 1 <= a <= Ng && 1 <= b <= Ng
+                        CUDA.@atomic shared_G[a, b] += 1.0f0
+                        CUDA.@atomic shared_G[b, a] += 1.0f0
+                    end
                 end
             end
         end
+    end
+
+    sync_threads()
+
+    # calculates final values of G block by block
+    for idx = tid:total_threads:(Ng * Ng)
+        linear = idx - 1
+        ii = (linear % Ng) + 1
+        jj = (linear ÷ Ng) + 1
+        CUDA.@atomic G[ii, jj] += shared_G[ii, jj]
     end
 
     return nothing
