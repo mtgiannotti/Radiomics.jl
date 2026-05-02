@@ -110,7 +110,6 @@ function calculate_glcm(img,
 
     if use_gpu
         mask_d = CuArray(mask)
-        disc_d = CuArray(disc)
         mapped_disc_d = CuArray(mapped_disc)
     end
     @inbounds for (dir_idx, dir) in enumerate(dirs)
@@ -133,10 +132,10 @@ function calculate_glcm(img,
                 cld(size(disc, 2), 8),
                 cld(size(disc, 3), 8)
             )
-            @cuda threads = threads blocks = blocks glcm_kernel!(G_d, mask_d, disc_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d)
+            mdx, mdy, mdz = size(mapped_disc)
+            @cuda threads = threads blocks = blocks glcm_kernel!(G_d, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz)
 
             CUDA.synchronize()
-
             G = Array(G_d)
         else
             for idx in CartesianIndices(disc)
@@ -183,19 +182,23 @@ function calculate_glcm(img,
     return glcm_matrices, gray_levels, bin_width_used
 end
 
-function glcm_kernel!(G, mask, disc, dir_i, dir_j, dir_k, mapped_disc)
+function glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     j = threadIdx().y + (blockIdx().y - 1) * blockDim().y
     k = threadIdx().z + (blockIdx().z - 1) * blockDim().z
 
-    if i <= size(disc, 1) && j <= size(disc, 2) && k <= size(disc, 3)
+    if i <= mdx && j <= mdy && k <= mdz
         if mask[i, j, k]
+            #=   
+                replaced CartesianIndex() and CartesianIndices() with manual indexing, as they perform poorly on the GPU and could potentially
+            =#
             nidx_i = i + dir_i
             nidx_j = j + dir_j
             nidx_k = k + dir_k
-            if 1 <= nidx_i <= size(mapped_disc, 1) &&
-               1 <= nidx_j <= size(mapped_disc, 2) &&
-               1 <= nidx_k <= size(mapped_disc, 3)
+            # this conditional statement is the equivalent of checkbounds() in the CPU version, checkbounds() is not natively supported in CUDA.jl
+            if 1 <= nidx_i <= mdx &&
+               1 <= nidx_j <= mdy &&
+               1 <= nidx_k <= mdz
                 if mask[nidx_i, nidx_j, nidx_k]
                     a = mapped_disc[i, j, k]
                     b = mapped_disc[nidx_i, nidx_j, nidx_k]
