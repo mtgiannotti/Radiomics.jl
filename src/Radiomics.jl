@@ -467,6 +467,10 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
 
     # Sanity check
     input_sanity_check(img, mask, verbose)
+    if ndims(mask) == 3
+        img, mask = bounding_box(img, mask, verbose)
+    end
+
 
     # Validate binning parameters
     if isnothing(n_bins) && !isnothing(bin_width) && voxel_count > 0

@@ -55,7 +55,7 @@ function bounding_box(img, mask, verbose::Bool)
 
         println("Cropped image data: $img_size | $ct_voxels voxels | $(round(image_crop_perc, digits=2))% reduction ")
     end
-    return cropped_img, cropped_mask
+    return cropped_img, BitArray(cropped_mask)
 end
 
 """
