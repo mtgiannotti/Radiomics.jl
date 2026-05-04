@@ -114,7 +114,7 @@ function calculate_glcm(img,
         end
         mask_d = CuArray(mask)
         mapped_disc_d = CuArray(mapped_disc)
-        G_d = CUDA.zeros(Float32, Ng, Ng)
+        G = CUDA.zeros(Float32, Ng, Ng)
 
         threads = (8, 8, 8)
         blocks = (
@@ -137,13 +137,12 @@ function calculate_glcm(img,
         E.g: idx = CartesianIndex(3,4,2) + CartesianIndex(1,0,0) = CartesianIndex(4,4,2)
         """
         c_dir = CartesianIndex(dir)
-        G = zeros(Float32, Ng, Ng)
         if use_gpu
-            fill!(G_d, 0.0f0)
-            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G_d, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
+            fill!(G, 0.0f0)
+            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
             CUDA.synchronize()
-            G = Array(G_d)
         else
+            G = zeros(Float32, Ng, Ng)
             for idx in CartesianIndices(disc)
                 if mask[idx]
                     nidx = idx + c_dir
@@ -163,16 +162,15 @@ function calculate_glcm(img,
             # Apply weight WITHOUT normalizing yet
             if sum(G) > 0
                 @. G *= weights[dir_idx]
-                push!(glcm_matrices, G)
             end
         else
             # No weighting: normalize each matrix separately
             total = sum(G)
             if total > 0
                 @. G /= total
-                push!(glcm_matrices, G)
             end
         end
+        use_gpu ? push!(glcm_matrices, Array(G)) : push!(glcm_matrices, G)
     end
 
     # If weighting is applied, sum all weighted matrices and normalize ONCE
@@ -195,7 +193,7 @@ end
                 Ng::Int)
     
     Calculates the G matrix on the GPU.
-    You can specify THREAD_PER_BLOCK, but exceeding device limits will prevent kernel from launching and having too many threads might lead to inefficient memory access due to lower data density.
+    You can specify THREAD_PER_BLOCK when launching the kernel, but exceeding device limits will prevent kernel from launching and having too many threads might lead to inefficient memory access due to lower data density.
 
     # Arguments:
         - `G`: The G matrix as Float32 array intialized to zero
@@ -210,12 +208,7 @@ end
 
     # Usage: 
         threads = (THREAD_PER_BLOCK, THREAD_PER_BLOCK, THREAD_PER_BLOCK)
-        blocks = (
-            cld(size(disc, 1), THREAD_PER_BLOCK),
-            cld(size(disc, 2), THREAD_PER_BLOCK),
-            cld(size(disc, 3), THREAD_PER_BLOCK)
-        )
-        mdx, mdy, mdz = size(mapped_disc)
+        blocks = (cld(size(disc, 1), THREAD_PER_BLOCK), cld(size(disc, 2), THREAD_PER_BLOCK),cld(size(disc, 3), THREAD_PER_BLOCK))
         @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G, mask, dir_i, dir_j, dir_k, mapped_disc, mdx, mdy, mdz, Ng)
         - `disc`: discretized image
 
