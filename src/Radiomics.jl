@@ -456,6 +456,9 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
     radiomic_features = Dict{String,Any}()
     total_time_accumulated = 0.0
 
+    img_gpu = undef
+    mask_gpu = undef
+
     # Helper function to print or buffer log messages
     function log_println(msg::String)
         if isnothing(log_buffer)
@@ -469,13 +472,11 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
     input_sanity_check(img, mask, verbose)
     if ndims(mask) == 3
         img, mask = bounding_box(img, mask, verbose)
-        if use_gpu
-            img_gpu = CuArray(img)
-            mask_gpu = CuArray(mask)
-        else
-            img_gpu = undef
-            mask_gpu = undef
-        end
+    end
+
+    if use_gpu
+        img_gpu = CuArray(img)
+        mask_gpu = CuArray(mask)
     end
 
     # Validate binning parameters

@@ -114,13 +114,15 @@ function calculate_glcm(img,
         if verbose
             println("Allocating resources to the GPU...")
         end
-        G_d = [CUDA.zeros(Float32, Ng, Ng) for _ in 1:length(dirs)]
+        G_d = CUDA.zeros(Float32, Ng, Ng)
+        # allocate once, reuse later on the CPU
+        G = zeros(Float32, Ng, Ng)
         mapped_disc_d = CuArray(mapped_disc)
-        threads = (8, 8, 4)
+        threads = (32, 4, 1)
         blocks = (
-            cld(size(disc, 1), 8),
-            cld(size(disc, 2), 8),
-            cld(size(disc, 3), 4)
+            cld(size(disc, 1), 32),
+            cld(size(disc, 2), 4),
+            cld(size(disc, 3), 1)
         )
         mdx, mdy, mdz = size(mapped_disc)
         if verbose
@@ -138,8 +140,9 @@ function calculate_glcm(img,
         """
         c_dir = CartesianIndex(dir)
         if use_gpu
-            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G_d[dir_idx], mask_gpu, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
-            G = G_d[dir_idx]
+            fill!(G_d, 0.0f0)
+            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G_d, mask_gpu, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
+            copyto!(G, G_d)
         else
             G = zeros(Float32, Ng, Ng)
             for idx in CartesianIndices(disc)
@@ -169,7 +172,7 @@ function calculate_glcm(img,
                 @. G /= total
             end
         end
-        use_gpu ? push!(glcm_matrices, G) : push!(glcm_matrices, G)
+        push!(glcm_matrices, G)
     end
 
     # If weighting is applied, sum all weighted matrices and normalize ONCE
