@@ -471,7 +471,6 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
         img, mask = bounding_box(img, mask, verbose)
     end
 
-
     # Validate binning parameters
     if isnothing(n_bins) && !isnothing(bin_width) && voxel_count > 0
         validate_binning_parameters(img, mask, bin_width)
