@@ -22,6 +22,8 @@ using Statistics
 """
 function calculate_glcm(img,
     mask,
+    img_gpu,
+    mask_gpu,
     spacing::Vector{Float32};
     n_bins::Union{Int,Nothing}=nothing,
     bin_width::Union{Float64,Nothing}=nothing,
@@ -112,15 +114,13 @@ function calculate_glcm(img,
         if verbose
             println("Allocating resources to the GPU...")
         end
-        mask_d = CuArray(mask)
+        G_d = [CUDA.zeros(Float32, Ng, Ng) for _ in 1:length(dirs)]
         mapped_disc_d = CuArray(mapped_disc)
-        G = CUDA.zeros(Float32, Ng, Ng)
-
-        threads = (8, 8, 8)
+        threads = (8, 8, 4)
         blocks = (
             cld(size(disc, 1), 8),
             cld(size(disc, 2), 8),
-            cld(size(disc, 3), 8)
+            cld(size(disc, 3), 4)
         )
         mdx, mdy, mdz = size(mapped_disc)
         if verbose
@@ -138,9 +138,8 @@ function calculate_glcm(img,
         """
         c_dir = CartesianIndex(dir)
         if use_gpu
-            fill!(G, 0.0f0)
-            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G, mask_d, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
-            CUDA.synchronize()
+            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G_d[dir_idx], mask_gpu, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
+            G = G_d[dir_idx]
         else
             G = zeros(Float32, Ng, Ng)
             for idx in CartesianIndices(disc)
@@ -170,7 +169,7 @@ function calculate_glcm(img,
                 @. G /= total
             end
         end
-        use_gpu ? push!(glcm_matrices, Array(G)) : push!(glcm_matrices, G)
+        use_gpu ? push!(glcm_matrices, G) : push!(glcm_matrices, G)
     end
 
     # If weighting is applied, sum all weighted matrices and normalize ONCE
@@ -599,7 +598,7 @@ end
     # With weighting
     features = get_glcm_features(img, mask, spacing, weighting_norm="euclidean")
 """
-function get_glcm_features(img, mask, voxel_spacing;
+function get_glcm_features(img, mask, img_gpu, mask_gpu, voxel_spacing;
     n_bins::Union{Int,Nothing}=nothing,
     bin_width::Union{Float64,Nothing}=nothing,
     weighting_norm::Union{String,Nothing}=nothing,
@@ -610,7 +609,7 @@ function get_glcm_features(img, mask, voxel_spacing;
     # Ensure spacing is Float32 and has the right length for the image dimensionality
     spacing = convert(Vector{Float32}, voxel_spacing)
 
-    glcm_matrices, gray_levels, bin_width_used = calculate_glcm(img, mask, spacing;
+    glcm_matrices, gray_levels, bin_width_used = calculate_glcm(img, mask, img_gpu, mask_gpu, spacing;
         n_bins=n_bins,
         bin_width=bin_width,
         weighting_norm=weighting_norm,

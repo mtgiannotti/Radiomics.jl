@@ -469,6 +469,13 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
     input_sanity_check(img, mask, verbose)
     if ndims(mask) == 3
         img, mask = bounding_box(img, mask, verbose)
+        if use_gpu
+            img_gpu = CuArray(img)
+            mask_gpu = CuArray(mask)
+        else
+            img_gpu = undef
+            mask_gpu = undef
+        end
     end
 
     # Validate binning parameters
@@ -482,7 +489,7 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
     # GLCM features
     if compute_all || :glcm in features
         t_glcm_features = Threads.@spawn @timed get_glcm_features(
-            img, mask, voxel_spacing;
+            img, mask, img_gpu, mask_gpu, voxel_spacing;
             n_bins=n_bins,
             bin_width=bin_width,
             weighting_norm=weighting_norm,
