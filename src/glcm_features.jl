@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Statistics
+using SHA
 """ 
     function calculate_glcm(img::Array{Float32,3}, mask::BitArray{3}, spacing::Vector{Float32}; n_bins::Union{Int,Nothing}=nothing, bin_width::Union{Float64,Nothing}=nothing, verbose::Bool=false)
 
@@ -31,7 +32,11 @@ function calculate_glcm(img,
     use_gpu::Bool=false,
     verbose::Bool=false)
 
-    disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+    if use_gpu
+        disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(img_gpu, mask_gpu; n_bins=n_bins, bin_width=bin_width)
+    else
+        disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+    end
 
     dim = ndims(disc)
     dirs = if dim == 2
@@ -68,21 +73,33 @@ function calculate_glcm(img,
     end
 
     Ng = length(gray_levels)
-
     glcm_matrices = Vector{Matrix{Float32}}()
     sizehint!(glcm_matrices, length(dirs))
 
-    # Pre-compute mapping from gray levels to indices directly into mapped_disc array
-    map_bin = Dict{Int,Int}()
-    sizehint!(map_bin, Ng)
-    @inbounds for (i, gl) in enumerate(gray_levels)
-        map_bin[Int(gl)] = i
-    end
+    if use_gpu
+        map_bin_keys = CUDA.zeros(Int32, Ng)
+        map_bin_values = CUDA.zeros(Int32, Ng)
+        mapped_disc = CUDA.zeros(Int32, size(disc))
 
-    mapped_disc = zeros(Int, size(disc))
-    @inbounds for i in CartesianIndices(disc)
-        if mask[i]
-            mapped_disc[i] = map_bin[disc[i]]
+        threads = 256
+        blocks_ng = cld(Ng, threads)
+        blocks_n = cld(length(disc), threads)
+        @cuda threads = threads blocks = blocks_ng map_bins_kernel!(map_bin_keys, map_bin_values, gray_levels, Ng)
+        @cuda threads = threads blocks = blocks_n mapped_disc_kernel!(disc, mapped_disc, mask_gpu, map_bin_keys, map_bin_values, length(disc), Ng)
+    else
+
+        # Pre-compute mapping from gray levels to indices directly into mapped_disc array
+        map_bin = Dict{Int,Int}()
+        sizehint!(map_bin, Ng)
+        @inbounds for (i, gl) in enumerate(gray_levels)
+            map_bin[Int(gl)] = i
+        end
+
+        mapped_disc = zeros(Int, size(disc))
+        @inbounds for i in CartesianIndices(disc)
+            if mask[i]
+                mapped_disc[i] = map_bin[disc[i]]
+            end
         end
     end
 
@@ -117,7 +134,6 @@ function calculate_glcm(img,
         G_d = CUDA.zeros(Float32, Ng, Ng)
         # allocate once, reuse later on the CPU
         G = zeros(Float32, Ng, Ng)
-        mapped_disc_d = CuArray(mapped_disc)
         threads = (32, 4, 1)
         blocks = (
             cld(size(disc, 1), 32),
@@ -141,8 +157,8 @@ function calculate_glcm(img,
         c_dir = CartesianIndex(dir)
         if use_gpu
             fill!(G_d, 0.0f0)
-            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G_d, mask_gpu, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc_d, mdx, mdy, mdz, Ng)
-            copyto!(G, G_d)
+            @cuda threads = threads blocks = blocks shmem = Ng * Ng * sizeof(Float32) glcm_kernel!(G_d, mask_gpu, Int32(c_dir[1]), Int32(c_dir[2]), Int32(c_dir[3]), mapped_disc, mdx, mdy, mdz, Ng)
+            G = Array(G_d)
         else
             G = zeros(Float32, Ng, Ng)
             for idx in CartesianIndices(disc)
@@ -174,6 +190,7 @@ function calculate_glcm(img,
         end
         push!(glcm_matrices, G)
     end
+    println(sum(G))
 
     # If weighting is applied, sum all weighted matrices and normalize ONCE
     if !isnothing(weighting_norm) && weighting_norm != "no_weighting" && !isempty(glcm_matrices)
@@ -184,8 +201,37 @@ function calculate_glcm(img,
         end
         glcm_matrices = [summed_glcm]
     end
-
+    use_gpu ? gray_levels = Array(gray_levels) : gray_levels
     return glcm_matrices, gray_levels, bin_width_used
+end
+
+function map_bins_kernel!(map_bin_keys, map_bin_values, gray_levels, Ng)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i > Ng
+        return nothing
+    end
+
+    @inbounds map_bin_keys[i] = gray_levels[i]
+    @inbounds map_bin_values[i] = i
+
+    return nothing
+end
+
+function mapped_disc_kernel!(disc, mapped_disc, mask, map_bin_keys, map_bin_values, N, Ng)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i > N
+        return nothing
+    end
+
+    @inbounds if mask[i]
+        for k in 1:Ng
+            if map_bin_keys[k] == disc[i]
+                mapped_disc[i] = map_bin_values[k]
+            end
+        end
+    end
+
+    return nothing
 end
 
 """

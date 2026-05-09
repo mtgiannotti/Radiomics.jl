@@ -119,11 +119,10 @@ function discretize_image_gpu(img::CuArray{<:Real},
         blocks = cld(length(mask), threads)
         @cuda threads = threads blocks = blocks bin_width_kernel!(img_f32, mask, inv_bin_width, bin_offset, disc)
     end
-    #gray_levels = sort(unique(apply_mask(disc, mask)))
-    gray_levels = Array(unique_gpu(apply_mask(disc, mask)))
+    gray_levels = unique_gpu(apply_mask(disc, mask))
     n_bins_actual = length(gray_levels)
 
-    return Array(disc), n_bins_actual, Int64.(gray_levels), bin_width_used
+    return disc, n_bins_actual, Int64.(gray_levels), bin_width_used
 end
 
 function assign_uniques!(img, is_boundary, idx, uniques)
