@@ -31,7 +31,19 @@ function calculate_glcm(img::AbstractArray{Float64},
     use_gpu::Bool=false,
     verbose::Bool=false)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
 
-    disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+    if use_gpu
+        disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(img_gpu, mask_gpu; n_bins=n_bins, bin_width=bin_width)
+        if ndims(disc) == 2
+            dirs_x = CuArray([1, 0, 1, 1])
+            dirs_y = CuArray([0, 1, 1, -1])
+        else
+            dirs_x = CuArray([1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, -1])
+            dirs_y = CuArray([0, 1, 0, 1, -1, 0, 0, 1, 1, 1, 1, -1, 1])
+            dirs_z = CuArray([0, 0, 1, 0, 0, 1, -1, 1, -1, 1, -1, 1, 1])
+        end
+    else
+        disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+    end
 
     dim = ndims(disc)
     dirs = dim == 2 ?
@@ -61,20 +73,58 @@ function calculate_glcm(img::AbstractArray{Float64},
 
     Ng = length(gray_levels)
     glcm_matrices = Vector{Matrix{Float64}}()
-    sizehint!(glcm_matrices, length(dirs))
+    if use_gpu
+        min_gl = Int(CUDA.minimum(gray_levels))
+        max_gl = Int(CUDA.maximum(gray_levels))
+        lut = CUDA.zeros(Int, max_gl - min_gl + 1)
 
-    min_gl = Int(minimum(gray_levels))
-    max_gl = Int(maximum(gray_levels))
-    lut = zeros(Int, max_gl - min_gl + 1)
+        @cuda threads = 256 blocks = cld(Ng, 256) lut_kernel!(gray_levels, lut, min_gl, Ng)
+        mapped_disc = CUDA.zeros(Int, size(disc))
+        Nx, Ny, Nz = size(mapped_disc)
+        @cuda threads = 256 blocks = cld(length(disc), 256) mapped_disc_kernel!(disc, mapped_disc, mask_gpu, length(disc), lut, min_gl)
 
-    @inbounds for (i, gl) in enumerate(gray_levels)
-        lut[Int(gl)-min_gl+1] = i
-    end
+        G_d = CUDA.zeros(Float32, length(dirs), Ng, Ng)
 
-    mapped_disc = zeros(Int, size(disc))
-    @inbounds for i in CartesianIndices(disc)
-        if mask[i]
-            mapped_disc[i] = lut[disc[i]-min_gl+1]
+        threads = (32, 32)
+        blocks_x = cld(length(mask_gpu), threads[1])
+        blocks_y = cld(length(dirs), threads[2])
+        @cuda threads = threads blocks = (blocks_x, blocks_y) glcm_kernel!(G_d, mask_gpu, mapped_disc, dirs_x, dirs_y, dirs_z, length(mask_gpu), length(dirs_x), Nx, Ny, Nz)
+
+        G_all = Array(G_d)
+    else
+        sizehint!(glcm_matrices, length(dirs))
+
+        min_gl = Int(minimum(gray_levels))
+        max_gl = Int(maximum(gray_levels))
+        lut = zeros(Int, max_gl - min_gl + 1)
+
+        @inbounds for (i, gl) in enumerate(gray_levels)
+            lut[Int(gl)-min_gl+1] = i
+        end
+
+        mapped_disc = zeros(Int, size(disc))
+        @inbounds for i in CartesianIndices(disc)
+            if mask[i]
+                mapped_disc[i] = lut[disc[i]-min_gl+1]
+            end
+        end
+
+        mask_indices = findall(mask)
+        c_dirs = [CartesianIndex(dir) for dir in dirs]
+
+        # 3D tensor allocation to eliminate indirection and maximize cache
+        G_all = zeros(Float64, length(dirs), Ng, Ng)
+
+        @inbounds for idx in mask_indices
+            i_val = mapped_disc[idx]
+            for (dir_idx, c_dir) in enumerate(c_dirs)
+                nidx = idx + c_dir
+                if checkbounds(Bool, disc, nidx) && mask[nidx]
+                    j_val = mapped_disc[nidx]
+                    G_all[dir_idx, i_val, j_val] += 1.0
+                    G_all[dir_idx, j_val, i_val] += 1.0
+                end
+            end
         end
     end
 
@@ -96,24 +146,6 @@ function calculate_glcm(img::AbstractArray{Float64},
             end
         end
         verbose && println("Weights computed: ", weights)
-    end
-
-    mask_indices = findall(mask)
-    c_dirs = [CartesianIndex(dir) for dir in dirs]
-
-    # 3D tensor allocation to eliminate indirection and maximize cache
-    G_all = zeros(Float64, length(dirs), Ng, Ng)
-
-    @inbounds for idx in mask_indices
-        i_val = mapped_disc[idx]
-        for (dir_idx, c_dir) in enumerate(c_dirs)
-            nidx = idx + c_dir
-            if checkbounds(Bool, disc, nidx) && mask[nidx]
-                j_val = mapped_disc[nidx]
-                G_all[dir_idx, i_val, j_val] += 1.0
-                G_all[dir_idx, j_val, i_val] += 1.0
-            end
-        end
     end
 
     # Normalization and decomposition into flat matrices
@@ -139,6 +171,7 @@ function calculate_glcm(img::AbstractArray{Float64},
         glcm_matrices = [summed_glcm]
     end
 
+    use_gpu ? gray_levels = Array(gray_levels) : gray_levels
     return glcm_matrices, gray_levels, bin_width_used
 end
 

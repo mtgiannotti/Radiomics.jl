@@ -430,6 +430,7 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
                 bin_width=bin_width,
                 weighting_norm=weighting_norm,
                 get_raw_matrices=get_raw_matrices,
+                use_gpu=use_gpu,
                 verbose=verbose
             )
             (result.value, result.time)
