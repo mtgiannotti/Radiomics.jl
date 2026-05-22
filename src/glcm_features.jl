@@ -21,24 +21,27 @@ using Statistics
         - `bin_width_used`: The bin width used for discretization.
 """
 function calculate_glcm(img::AbstractArray{Float64},
-                         mask::BitArray,
-                         spacing::Vector{Float64};
-                         n_bins::Union{Int,Nothing}=nothing,
-                         bin_width::Union{Float64,Nothing}=nothing,
-                         weighting_norm::Union{String,Nothing}=nothing,
-                         verbose::Bool=false)::Tuple{Vector{Matrix{Float64}}, Vector{Int}, Float64}
+    mask::BitArray,
+    img_gpu,
+    mask_gpu,
+    spacing::Vector{Float64};
+    n_bins::Union{Int,Nothing}=nothing,
+    bin_width::Union{Float64,Nothing}=nothing,
+    weighting_norm::Union{String,Nothing}=nothing,
+    use_gpu::Bool=false,
+    verbose::Bool=false)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
 
     disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
 
     dim = ndims(disc)
-    dirs = dim == 2 ? 
-        [(1, 0), (0, 1), (1, 1), (1, -1)] : 
-        [
-            (1, 0, 0), (0, 1, 0), (0, 0, 1),
-            (1, 1, 0), (1, -1, 0), (1, 0, 1), (1, 0, -1),
-            (0, 1, 1), (0, 1, -1), (1, 1, 1), (1, 1, -1),
-            (1, -1, 1), (-1, 1, 1)
-        ]
+    dirs = dim == 2 ?
+           [(1, 0), (0, 1), (1, 1), (1, -1)] :
+           [
+        (1, 0, 0), (0, 1, 0), (0, 0, 1),
+        (1, 1, 0), (1, -1, 0), (1, 0, 1), (1, 0, -1),
+        (0, 1, 1), (0, 1, -1), (1, 1, 1), (1, 1, -1),
+        (1, -1, 1), (-1, 1, 1)
+    ]
 
     if verbose
         if !isnothing(n_bins)
@@ -50,7 +53,7 @@ function calculate_glcm(img::AbstractArray{Float64},
         end
 
         println(dim == 2 ? "2D image detected. Using $(length(dirs)) directions." :
-                           "3D image detected. Using $(length(dirs)) directions.")
+                "3D image detected. Using $(length(dirs)) directions.")
         if weighting_norm !== nothing
             println("Weighting norm applied: $(weighting_norm)")
         end
@@ -65,13 +68,13 @@ function calculate_glcm(img::AbstractArray{Float64},
     lut = zeros(Int, max_gl - min_gl + 1)
 
     @inbounds for (i, gl) in enumerate(gray_levels)
-        lut[Int(gl) - min_gl + 1] = i
+        lut[Int(gl)-min_gl+1] = i
     end
 
     mapped_disc = zeros(Int, size(disc))
     @inbounds for i in CartesianIndices(disc)
         if mask[i]
-            mapped_disc[i] = lut[disc[i] - min_gl + 1]
+            mapped_disc[i] = lut[disc[i]-min_gl+1]
         end
     end
 
@@ -97,7 +100,7 @@ function calculate_glcm(img::AbstractArray{Float64},
 
     mask_indices = findall(mask)
     c_dirs = [CartesianIndex(dir) for dir in dirs]
-    
+
     # 3D tensor allocation to eliminate indirection and maximize cache
     G_all = zeros(Float64, length(dirs), Ng, Ng)
 
@@ -201,7 +204,7 @@ function extract_glcm_features(glcm::Matrix{Float64}, gray_levels::Vector{Int}):
 
     # Exploit the symmetry of the GLCM. px and py are identical.
     px = vec(sum(glcm, dims=2))
-    py = px 
+    py = px
 
     gl = Float64.(gray_levels)
 
@@ -221,7 +224,7 @@ function extract_glcm_features(glcm::Matrix{Float64}, gray_levels::Vector{Int}):
 
     max_gray_level = maximum(gray_levels)
     min_gray_level = minimum(gray_levels)
-    
+
     p_xminusy = zeros(Float64, max_gray_level - min_gray_level + 1)
     p_xplusy = zeros(Float64, 2 * max_gray_level + 1)
 
@@ -249,27 +252,27 @@ function extract_glcm_features(glcm::Matrix{Float64}, gray_levels::Vector{Int}):
             cluster_tend += s2 * p_diag
             cluster_shade += s * s2 * p_diag
             cluster_prom += s2 * s2 * p_diag
-            
+
             if use_corr
                 correlation += xi_minus_μx * xi_minus_μx * p_diag * inv_corr_denom
             end
-            
+
             joint_energy += p_diag * p_diag
             joint_entropy -= p_diag * log2(p_diag + eps_val)
             sum_squares += xi_minus_μx * xi_minus_μx * p_diag
-            
+
             # d = 0, so the divisors collapse to 1.0
             idm += p_diag
             id += p_diag
             idmn += p_diag
             idn += p_diag
-            
+
             max_prob = max(max_prob, p_diag)
             p_xminusy[1] += p_diag
-            
+
             sum_val = gray_levels[i] + gray_levels[i]
             p_xplusy[sum_val] += p_diag
-            
+
             pxpy = px[i] * px[i]
             if pxpy > 0
                 HXY1 -= p_diag * log2(pxpy + eps_val)
@@ -282,46 +285,46 @@ function extract_glcm_features(glcm::Matrix{Float64}, gray_levels::Vector{Int}):
             if p > 0
                 yj = gl[j]
                 yj_minus_μx = yj - μx
-                
+
                 autocorr += 2.0 * (xi * yj * p)
-                
+
                 s = xi_minus_μx + yj_minus_μx
                 s2 = s * s
                 cluster_tend += 2.0 * (s2 * p)
                 cluster_shade += 2.0 * (s * s2 * p)
                 cluster_prom += 2.0 * (s2 * s2 * p)
-                
+
                 d = xi - yj
                 d2 = d * d
                 absd = abs(d)
                 contrast += 2.0 * (d2 * p)
-                
+
                 if use_corr
                     correlation += 2.0 * (xi_minus_μx * yj_minus_μx * p * inv_corr_denom)
                 end
-                
+
                 joint_energy += 2.0 * (p * p)
                 joint_entropy -= 2.0 * (p * log2(p + eps_val))
-                
+
                 sum_squares += (xi_minus_μx * xi_minus_μx + yj_minus_μx * yj_minus_μx) * p
-                
+
                 idm += 2.0 * (p / (1.0 + d2))
                 id += 2.0 * (p / (1.0 + absd))
                 idmn += 2.0 * (p / (1.0 + (absd / ng)^2))
-                idn  += 2.0 * (p / (1.0 + absd / ng))
-                
+                idn += 2.0 * (p / (1.0 + absd / ng))
+
                 inv_var += 2.0 * (p / d2)
                 max_prob = max(max_prob, p)
-                
+
                 diff_val = abs(gray_levels[i] - gray_levels[j])
-                p_xminusy[diff_val + 1] += 2.0 * p
-                
+                p_xminusy[diff_val+1] += 2.0 * p
+
                 sum_val = gray_levels[i] + gray_levels[j]
                 p_xplusy[sum_val] += 2.0 * p
-                
+
                 diff_avg += 2.0 * (absd * p)
                 diff_sq_avg += 2.0 * (d2 * p)
-                
+
                 pxpy = px[i] * px[j]
                 if pxpy > 0
                     HXY1 -= 2.0 * (p * log2(pxpy + eps_val))
@@ -430,22 +433,26 @@ end
     features = get_glcm_features(img, mask, spacing, weighting_norm="euclidean")
 """
 function get_glcm_features(img::AbstractArray{Float64},
-                            mask::BitArray,
-                            voxel_spacing::Vector{Float64};
-                            n_bins::Union{Int,Nothing}=nothing,
-                            bin_width::Union{Float64,Nothing}=nothing,
-                            weighting_norm::Union{String,Nothing}=nothing,
-                            get_raw_matrices::Bool=false,
-                            verbose::Bool=false)::Dict{String,Any}
+    mask::BitArray,
+    img_gpu,
+    mask_gpu,
+    voxel_spacing::Vector{Float64};
+    n_bins::Union{Int,Nothing}=nothing,
+    bin_width::Union{Float64,Nothing}=nothing,
+    weighting_norm::Union{String,Nothing}=nothing,
+    get_raw_matrices::Bool=false,
+    use_gpu::Bool=false,
+    verbose::Bool=false)::Dict{String,Any}
 
-    glcm_matrices, gray_levels, bin_width_used = calculate_glcm(img, mask, voxel_spacing;
+    glcm_matrices, gray_levels, bin_width_used = calculate_glcm(img, mask, img_gpu, mask_gpu, voxel_spacing;
         n_bins=n_bins,
         bin_width=bin_width,
         weighting_norm=weighting_norm,
+        use_gpu=use_gpu,
         verbose=verbose)
 
     if isempty(glcm_matrices)
-        return Dict{String, Any}() 
+        return Dict{String,Any}()
     end
 
     if get_raw_matrices
@@ -456,13 +463,13 @@ function get_glcm_features(img::AbstractArray{Float64},
             println("=================================")
         end
 
-        return Dict{String, Any}("raw_glcm_matrices" => glcm_matrices)
+        return Dict{String,Any}("raw_glcm_matrices" => glcm_matrices)
     end
 
     n_matrices = length(glcm_matrices)
     inv_n = 1.0 / Float64(n_matrices)
-    
-    final_features = Dict{String, Any}()
+
+    final_features = Dict{String,Any}()
 
 
     f1 = extract_glcm_features(glcm_matrices[1], gray_levels)
@@ -483,5 +490,5 @@ function get_glcm_features(img::AbstractArray{Float64},
 
     verbose && println("Completed! Extracted $(length(final_features)) features.")
 
-    return final_features 
+    return final_features
 end
