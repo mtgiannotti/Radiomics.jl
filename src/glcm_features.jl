@@ -74,23 +74,28 @@ function calculate_glcm(img::AbstractArray{Float64},
     Ng = length(gray_levels)
     glcm_matrices = Vector{Matrix{Float64}}()
     if use_gpu
-        min_gl = Int(CUDA.minimum(gray_levels))
-        max_gl = Int(CUDA.maximum(gray_levels))
-        lut = CUDA.zeros(Int, max_gl - min_gl + 1)
+        min_gl, max_gl = Int32.(extrema(gray_levels))
+        lut = CUDA.zeros(Int32, max_gl - min_gl + 1)
 
         @cuda threads = 256 blocks = cld(Ng, 256) lut_kernel!(gray_levels, lut, min_gl, Ng)
-        mapped_disc = CUDA.zeros(Int, size(disc))
+        mapped_disc = CUDA.zeros(Int32, size(disc))
         Nx, Ny, Nz = size(mapped_disc)
         @cuda threads = 256 blocks = cld(length(disc), 256) mapped_disc_kernel!(disc, mapped_disc, mask_gpu, length(disc), lut, min_gl)
 
-        G_d = CUDA.zeros(Float32, length(dirs), Ng, Ng)
+        G_d = CUDA.zeros(Float32, Ng, Ng, length(dirs))
 
-        threads = (32, 32)
+        threads = (32, 16)
         blocks_x = cld(length(mask_gpu), threads[1])
         blocks_y = cld(length(dirs), threads[2])
-        @cuda threads = threads blocks = (blocks_x, blocks_y) glcm_kernel!(G_d, mask_gpu, mapped_disc, dirs_x, dirs_y, dirs_z, length(mask_gpu), length(dirs_x), Nx, Ny, Nz)
+        @cuda threads = threads blocks = (blocks_x, blocks_y) glcm_kernel!(G_d, mask_gpu, mapped_disc, dirs_x, dirs_y, dirs_z, length(dirs_x), Nx, Ny, Nz)
 
         G_all = Array(G_d)
+
+        for d in axes(G_all, 3)
+            sym_sum = @view G_all[:, :, d]
+            sym_sum .+= sym_sum'
+        end
+        G_all = permutedims(G_all, (3, 1, 2))
     else
         sizehint!(glcm_matrices, length(dirs))
 

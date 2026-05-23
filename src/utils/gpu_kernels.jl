@@ -22,7 +22,7 @@ function mapped_disc_kernel!(disc, mapped_disc, mask, N, lut, min_gl)
     return nothing
 end
 
-function glcm_kernel!(G, mask, mapped_disc, dirs_x, dirs_y, dirs_z, mask_length, dirs_length, Nx, Ny, Nz)
+function glcm_kernel!(G, mask, mapped_disc, dirs_x, dirs_y, dirs_z, dirs_length, Nx, Ny, Nz)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x # maps threads to mask
     j = threadIdx().y + (blockIdx().y - 1) * blockDim().y # maps threads to directions
 
@@ -30,11 +30,11 @@ function glcm_kernel!(G, mask, mapped_disc, dirs_x, dirs_y, dirs_z, mask_length,
         return nothing
     end
 
-    z = fld(i - 1, Nx * Ny) + 1
-    r = (i - 1) % (Nx * Ny)
-
-    y = fld(r, Nx) + 1
-    x = (r % Nx) + 1
+    # here we map a 1D index into 3D coordinates
+    z = fld(i - 1, Nx * Ny) + 1     # depth index
+    r = (i - 1) % (Nx * Ny)         # index inside 2d plane of size Nx * Ny
+    y = fld(r, Nx) + 1              # row index from 1 to Ny
+    x = (r % Nx) + 1                # column index from 1 to Nx
 
     if !mask[x, y, z]
         return nothing
@@ -59,8 +59,8 @@ function glcm_kernel!(G, mask, mapped_disc, dirs_x, dirs_y, dirs_z, mask_length,
     i_disc = mapped_disc[x, y, z]
     j_disc = mapped_disc[nx, ny, nz]
 
-    CUDA.@atomic G[j, i_disc, j_disc] += 1.0f0
-    CUDA.@atomic G[j, j_disc, i_disc] += 1.0f0
+    # only perform one sum, symmetrization is applied on the CPU because it's faster this way -> fewer threads wait for synchronization due to race condition
+    CUDA.@atomic G[i_disc, j_disc, j] += 1.0f0
 
     return nothing
 end
