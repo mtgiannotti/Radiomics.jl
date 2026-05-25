@@ -1,39 +1,3 @@
-"""
-
-    GPU kernels and functions that call them and GPU compatible functions from utils.jl go here
-
-"""
-
-function bin_nbins_kernel!(img_f32, mask, inv_bin_width, n_bins, vmin, disc)
-    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-    if i > length(mask)
-        return nothing
-    end
-
-    if mask[i]
-        v = img_f32[i]
-        b = min(Int(floor((v - vmin) * inv_bin_width)) + 1, n_bins)
-        disc[i] = b
-    end
-
-    return nothing
-end
-
-function bin_width_kernel!(img_f32, mask, inv_bin_width, bin_offset, disc)
-    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-    if i > length(mask)
-        return nothing
-    end
-
-    if mask[i]
-        v = img_f32[i]
-        b = Int(floor(v * inv_bin_width)) - bin_offset + 1
-        disc[i] = b
-    end
-
-    return nothing
-end
-
 function assign!(img, mask, idx, roi)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > length(mask)

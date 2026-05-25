@@ -7,8 +7,8 @@ using TOML
 using CUDA
 
 include("utils/utils.jl")
-include("utils/utils_gpu.jl")
-include("utils/gpu_kernels.jl")
+include("utils/gpu/utils.jl")
+include("utils//gpu/kernels.jl")
 include("glcm_features.jl")
 include("first_order_features.jl")
 include("shape_2D_features.jl")
