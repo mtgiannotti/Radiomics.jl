@@ -1,12 +1,25 @@
 """ 
-    TODO: write one comment for each kernel that includes a detailed description
+    IMPORTANT: 
+    - better information about how these kernels are called and executed can be found in the documentation of their respective caller functions
+    - all CUDA.jl kernels must return `nothing`
 """
 
-""" generic kernels:
-    - findall_kernel!
-    - assign_uniques!
-    - set_boundaries!
-    - assign!
+"""
+    findall_kernel!(mask::CuArray,
+                    idx::CuArray,
+                    valid_idx::CuArray,
+                    mask_length::CuArray)
+    
+    Extracts all valid ROI indices 
+
+    # Arguments:
+    - `mask::CuArray`: The binary mask defining the region of interest stored on the GPU
+    - `idx::CuArray`: The vector containing the position where each thread will write if the mask is true
+    - `valid_idx::CuArray`: The vector where all valid ROI indices are stored
+    - `mask_length::CuArray`: The length of `mask`
+
+    # Caller functions:
+    - `init_gpu` in `utils/utils_gpu/utils.jl`
 """
 
 function findall_kernel!(mask, idx, valid_idx, mask_length)
@@ -22,6 +35,24 @@ function findall_kernel!(mask, idx, valid_idx, mask_length)
     return nothing
 end
 
+"""
+    assign_uniques!(img::CuArray,
+                    is_boundary::CuArray,
+                    idx::CuArray,
+                    uniques::CuArray)
+
+    Extracts all unique values inside an array 
+
+    # Arguments
+    - `img::CuArray`: The input image stored on the GPU 
+    - `is_boundary::CuArray`: The binary array where each element indicates whether the corrisponding position is a boundary (1) or not (0)
+    - `idx`: The array where each element indicates the position where every thread will write if the corrisponding position is a boundary 
+    - `uniques`: The array where unique values will be stored 
+
+    # Caller functions:
+    - `unique_gpu` in `utils/utils_gpu/utils.jl`
+"""
+
 function assign_uniques!(img, is_boundary, idx, uniques)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > length(is_boundary)
@@ -33,6 +64,22 @@ function assign_uniques!(img, is_boundary, idx, uniques)
     end
     return nothing
 end
+
+"""
+    set_boundaries!(x::CuArray,
+                    is_boundary::CuArray)
+
+    Finds boundaries inside a sorted array. Example:
+    x = [1, 1, 1, 2, 3, 3, 6, 6, 7]
+    elements in position 1, 4, 5, 7, 8 are boundaries 
+
+    # Arguments
+    - `x`: Input array
+    - `is_boundary`: A binary array containing boundary flags for the corresponding position
+
+    # Caller functions:
+    - `unique_gpu.jl` in `utils/utils_gpu/utils.jl`
+"""
 
 function set_boundaries!(x, is_boundary)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
@@ -48,6 +95,24 @@ function set_boundaries!(x, is_boundary)
 
     return nothing
 end
+
+"""
+    assign!(img::CuArray, 
+            mask_indices::CuArray,
+            roi::CuArray,
+            n::CuArray)
+
+    Extracts the intensity of all voxels belonging to the ROI 
+
+    # Arguments
+    - `img::CuArray`: The input image stored on the GPU
+    - `mask_indices::CuArray`: The array containing all valid ROI indices
+    - `roi::CuArray`: The array where the intensity of the voxels belonging to the ROI are stored
+    - `n::CuArray`: The length of `mask_indices`
+
+    # Caller functions:
+    - `apply_mask` in `utils/utils_gpu/utils.jl`
+"""
 
 function assign!(img, mask_indices, roi, n)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x

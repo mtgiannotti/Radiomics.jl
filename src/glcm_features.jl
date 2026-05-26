@@ -31,9 +31,11 @@ function calculate_glcm(img::AbstractArray{Float64},
     weighting_norm::Union{String,Nothing}=nothing,
     use_gpu::Bool=false,
     verbose::Bool=false)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
-
     if use_gpu
-        disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(img_gpu, mask_gpu, mask_indices_gpu; n_bins=n_bins, bin_width=bin_width)
+        @time begin
+            disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(img_gpu, mask_gpu, mask_indices_gpu; n_bins=n_bins, bin_width=bin_width)
+            CUDA.synchronize()
+        end
         if ndims(disc) == 2
             dirs_x = CuArray([1, 0, 1, 1])
             dirs_y = CuArray([0, 1, 1, -1])
@@ -88,8 +90,11 @@ function calculate_glcm(img::AbstractArray{Float64},
         threads = (16, 16)
         blocks_x = cld(length(mask_gpu), threads[1])
         blocks_y = cld(length(dirs), threads[2])
-        @cuda threads = threads blocks = (blocks_x, blocks_y) glcm_kernel!(G_d, mask_gpu, mapped_disc, dirs_x, dirs_y, dirs_z, length(dirs_x), Nx, Ny, Nz)
-
+        @time begin
+            @cuda threads = threads blocks = (blocks_x, blocks_y) glcm_kernel!(G_d, mask_gpu, mapped_disc, dirs_x, dirs_y, dirs_z, length(dirs_x), Nx, Ny, Nz)
+            CUDA.synchronize()
+        end
+        CUDA.synchronize()
         G_all = Array(G_d)
 
         for d in axes(G_all, 3)
