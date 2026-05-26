@@ -6,9 +6,10 @@ using JSON3
 using TOML
 using CUDA
 
-include("utils/utils.jl")
-include("utils/gpu/utils.jl")
-include("utils//gpu/kernels.jl")
+include("utils/utils_gpu/utils.jl")
+include("utils//utils_gpu/kernels.jl")
+
+include("utils/utils_cpu/utils.jl")
 include("glcm_features.jl")
 include("first_order_features.jl")
 include("shape_2D_features.jl")
@@ -399,8 +400,6 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
 
     radiomic_features = Dict{String,Any}()
     total_time_accumulated = 0.0
-    img_gpu = undef
-    mask_gpu = undef
 
     # Helper function to print or buffer log messages
     function log_println(msg::String)
@@ -417,15 +416,18 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
     end
 
     if use_gpu
-        img_gpu = CuArray(img)
-        mask_gpu = CuArray(mask)
+        img_gpu, mask_gpu, mask_indices_gpu, use_gpu = init_gpu(img, mask, verbose)
+    else
+        img_gpu = undef
+        mask_gpu = undef
+        mask_indices_gpu = undef
     end
 
     # GLCM features
     if compute_all || :glcm in features
         t_glcm_features = Threads.@spawn begin
             result = @timed get_glcm_features(
-                img, mask, img_gpu, mask_gpu, voxel_spacing;
+                img, mask, img_gpu, mask_gpu, mask_indices_gpu, voxel_spacing;
                 n_bins=n_bins,
                 bin_width=bin_width,
                 weighting_norm=weighting_norm,
