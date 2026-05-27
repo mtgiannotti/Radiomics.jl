@@ -425,6 +425,11 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
     t_shape3d_features = nothing
     t_shape2d_features = nothing
 
+    img_gpu = mask_gpu = mask_indices_gpu = nothing
+    if use_gpu
+        img_gpu, mask_gpu, mask_indices_gpu, use_gpu = init_gpu(img, mask, verbose)
+    end
+
     # GLCM features
     if compute_all || :glcm in features
         t_glcm_features = Threads.@spawn begin
