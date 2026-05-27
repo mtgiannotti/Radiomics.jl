@@ -415,24 +415,24 @@ function _compute_radiomics_impl(img, mask, voxel_spacing, voxel_count::Int;
         validate_binning_parameters(img, mask, bin_width)
     end
 
+    img_gpu = mask_gpu = mask_indices_gpu = nothing
     if use_gpu
         img_gpu, mask_gpu, mask_indices_gpu, use_gpu = init_gpu(img, mask, verbose)
-    else
-        img_gpu = undef
-        mask_gpu = undef
-        mask_indices_gpu = undef
     end
 
     # GLCM features
     if compute_all || :glcm in features
         t_glcm_features = Threads.@spawn begin
             result = @timed get_glcm_features(
-                img, mask, img_gpu, mask_gpu, mask_indices_gpu, voxel_spacing;
+                img, mask, voxel_spacing;
                 n_bins=n_bins,
                 bin_width=bin_width,
                 weighting_norm=weighting_norm,
                 get_raw_matrices=get_raw_matrices,
                 use_gpu=use_gpu,
+                img_gpu=img_gpu,
+                mask_gpu=mask_gpu,
+                mask_indices_gpu=mask_indices_gpu,
                 verbose=verbose
             )
             (result.value, result.time)

@@ -18,7 +18,7 @@
     - `mask_indices::CuArray`: The vector of valid ROI indices 
     - `true`: flag indicating that GPU execution can proceed normally
     If not compatible:
-    - `img_device`, `mask_device` and `mask_indices` are returned as `undef`
+    - `img_device`, `mask_device` and `mask_indices` are returned as `nothing`
     - `false`: Flag indicating that GPU execution cannot proceed
 """
 
@@ -39,7 +39,7 @@ function init_gpu(img_host::AbstractArray,
     else
         error_msg = errors * "Falling back to the CPU"
         @warn error_msg
-        return undef, undef, undef, false
+        return nothing, nothing, nothing, false
     end
 end
 
@@ -149,56 +149,54 @@ function discretize_image_gpu(img::CuArray{<:Real},
     mask::CuArray,
     mask_indices::CuArray;
     n_bins::Union{Int,Nothing}=nothing,
-    bin_width::Union{<:Real,Nothing}=nothing)
-
-    #img_f32 = convert(CuArray{Float32}, img) -> extremely slow, using img_f32 = img temporarily in order to not change the rest of the function
-    img_f32 = img
-    bin_width_f32 = isnothing(bin_width) ? nothing : Float32(bin_width)
+    bin_width::Union{<:Real,Nothing}=nothing,
+    vmin::Union{Float64,Nothing}=nothing,
+    vmax::Union{Float64,Nothing}=nothing)
 
     if CUDA.sum(mask) == 0
         return zeros(Int32, size(img_f32)), 0, Int[], 0.0f0
     end
 
-    vals = view(img_f32, mask)
-    vmin = minimum(vals)
-    vmax = maximum(vals)
-
-    if !isnothing(n_bins) && !isnothing(bin_width_f32)
-        error("Specify either n_bins or bin_width, not both.")
-
-    elseif isnothing(n_bins) && isnothing(bin_width_f32)
-        bin_width_f32 = 25.0f0
+    if isnothing(vmin) || isnothing(vmax)
+        vals = view(img, mask)
+        vmin = minimum(vals)
+        vmax = maximum(vals)
     end
 
-    disc = CUDA.zeros(Int, size(img_f32))
+    disc = CUDA.zeros(Int, size(img))
+
+    if !isnothing(n_bins) && !isnothing(bin_width)
+        error("Specify either n_bins or bin_width, not both.")
+    elseif isnothing(n_bins) && isnothing(bin_width)
+        bin_width = 25.0
+    end
 
     n_of_indices = length(mask_indices)
 
     if !isnothing(n_bins)
-        bin_width_used = (vmax - vmin) / Float32(n_bins)
-        if bin_width_used ≈ 0.0f0
-            bin_width_used = 1.0f0
+        bin_width_used = (vmax - vmin) / Float64(n_bins)
+        if bin_width_used ≈ 0.0
+            bin_width_used = 1.0
         end
 
-        inv_bin_width = 1.0f0 / bin_width_used
+        inv_bin_width = 1.0 / bin_width_used
 
         threads = 256
         blocks = cld(n_of_indices, threads)
-        @cuda threads = threads blocks = blocks bin_nbins_kernel!(img_f32, mask_indices, inv_bin_width, n_bins, vmin, disc, n_of_indices)
+        @cuda threads = threads blocks = blocks bin_nbins_kernel!(img, mask_indices, inv_bin_width, n_bins, vmin, disc, n_of_indices)
     else
-        bin_width_used = bin_width_f32
+        bin_width_used = bin_width
         inv_bin_width = 1.0f0 / bin_width_used
         bin_offset = Int(floor(vmin * inv_bin_width))
 
         threads = 256
         blocks = cld(n_of_indices, threads)
-        @cuda threads = threads blocks = blocks bin_width_kernel!(img_f32, mask_indices, inv_bin_width, bin_offset, disc, n_of_indices)
+        @cuda threads = threads blocks = blocks bin_width_kernel!(img, mask_indices, inv_bin_width, bin_offset, disc, n_of_indices)
     end
     gray_levels = unique_gpu(apply_mask(disc, mask_indices))
-    CUDA.synchronize()
     n_bins_actual = length(gray_levels)
 
-    return disc, n_bins_actual, Int64.(gray_levels), bin_width_used
+    return disc, n_bins_actual, gray_levels, bin_width_used
 end
 
 function unique_gpu(img)
