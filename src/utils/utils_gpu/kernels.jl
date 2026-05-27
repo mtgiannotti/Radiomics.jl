@@ -198,22 +198,31 @@ function glcm_kernel!(G, mask, mask_indices, mapped_disc, dirs_x, dirs_y, dirs_z
 
     lin_idx = mask_indices[i]
 
-    # here we map a 1D index into 3D coordinates
-    z = fld(lin_idx - 1, Nx * Ny) + 1     # depth index
-    r = (lin_idx - 1) % (Nx * Ny)         # index inside 2d plane of size Nx * Ny
+    # here we map a 1D index into 3D or 2D coordinates
+    z = 1
+    if Nz > 1
+        z = fld(lin_idx - 1, Nx * Ny) + 1 # depth index
+    end
+    r = (lin_idx - 1) % (Nx * Ny)   # index inside 2d plane of size Nx * Ny
     y = fld(r, Nx) + 1              # row index from 1 to Ny
     x = (r % Nx) + 1                # column index from 1 to Nx
 
     dx = dirs_x[j]
     dy = dirs_y[j]
-    dz = dirs_z[j]
+    dz = Nz > 1 ? dirs_z[j] : 0
 
     nx = x + dx
     ny = y + dy
     nz = z + dz
 
-    if nx < 1 || nx > Nx || ny < 1 || ny > Ny || nz < 1 || nz > Nz
+    if nx < 1 || nx > Nx || ny < 1 || ny > Ny
         return
+    end
+
+    if Nz > 1
+        if nz < 1 || nz > Nz
+            return nothing
+        end
     end
 
     if !mask[nx, ny, nz]
@@ -224,6 +233,43 @@ function glcm_kernel!(G, mask, mask_indices, mapped_disc, dirs_x, dirs_y, dirs_z
     j_disc = mapped_disc[nx, ny, nz]
 
     # only perform one sum, symmetrization is applied on the CPU because it's faster this way -> fewer threads wait for synchronization due to race condition
+    CUDA.@atomic G[i_disc, j_disc, j] += 1.0
+
+    return nothing
+end
+
+function glcm_kernel_2d!(G, mask, mask_indices, mapped_disc, dirs_x, dirs_y, dirs_length, Nx, Ny, num_valid)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    j = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+
+    if i > num_valid || j > dirs_length
+        return nothing
+    end
+
+    lin_idx = mask_indices[i]
+
+    y = fld(lin_idx - 1, Nx) + 1
+    x = ((lin_idx - 1) % Nx) + 1
+
+    dx = dirs_x[j]
+    dy = dirs_y[j]
+
+    nx = x + dx
+    ny = y + dy
+
+    # bounds check
+    if nx < 1 || nx > Nx || ny < 1 || ny > Ny
+        return nothing
+    end
+
+    # mask check
+    if !mask[nx, ny]
+        return nothing
+    end
+
+    i_disc = mapped_disc[x, y]
+    j_disc = mapped_disc[nx, ny]
+
     CUDA.@atomic G[i_disc, j_disc, j] += 1.0
 
     return nothing

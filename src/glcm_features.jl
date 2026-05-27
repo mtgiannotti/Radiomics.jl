@@ -36,6 +36,7 @@ function calculate_glcm(img::AbstractArray{Float64},
         if ndims(disc) == 2
             dirs_x = CuArray([1, 0, 1, 1])
             dirs_y = CuArray([0, 1, 1, -1])
+            dirs_z = CuArray([0, 0, 0, 0])
         else
             dirs_x = CuArray([1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, -1])
             dirs_y = CuArray([0, 1, 0, 1, -1, 0, 0, 1, 1, 1, 1, -1, 1])
@@ -79,7 +80,8 @@ function calculate_glcm(img::AbstractArray{Float64},
 
         @cuda threads = 256 blocks = cld(Ng, 256) lut_kernel!(gray_levels, lut, min_gl, Ng)
         mapped_disc = CUDA.zeros(Int, size(disc))
-        Nx, Ny, Nz = size(mapped_disc)
+        Nx, Ny = size(mapped_disc)
+        Nz = (dim == 3) ? size(mapped_disc, 3) : 1
         @cuda threads = 256 blocks = cld(length(disc), 256) mapped_disc_kernel!(disc, mapped_disc, mask_gpu, length(disc), lut, min_gl)
 
         G_d = CUDA.zeros(Float64, Ng, Ng, length(dirs))
