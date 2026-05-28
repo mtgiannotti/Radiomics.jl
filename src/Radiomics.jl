@@ -184,7 +184,7 @@ function extract_radiomic_features(img_input, mask_input, voxel_spacing_input;
                 push!(log_buffer, "Label $label contains $voxel_count voxels")
                 push!(log_buffer, "Applying bounding box to Label $label...")
                 local img_to_use
-                img_to_use, mask_to_use = bounding_box(p.img, mask_to_use, p.verbose; log_buffer=log_buffer)
+                img_to_use, mask_to_use = bounding_box(p.img, mask_to_use, p.verbose; log_buffer=log_buffer, use_gpu=use_gpu)
 
                 if compute_all
                     push!(log_buffer, "Computing ALL features")
@@ -295,7 +295,7 @@ function extract_radiomic_features(img_input, mask_input, voxel_spacing_input;
         println("Label $(p.labels) contains $voxel_count voxels")
     end
 
-    img_to_use, mask_to_use = bounding_box(p.img, mask_to_use, p.verbose)
+    img_to_use, mask_to_use = bounding_box(p.img, mask_to_use, p.verbose; use_gpu=use_gpu)
 
     total_start_time = time()
     total_time_accumulated = 0.0

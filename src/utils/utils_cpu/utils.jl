@@ -1,4 +1,22 @@
 """
+    optimal_device(mask_voxels::Int
+                   voxel_threshold_warning::Int=0)
+    Warns the user that CPU execution may be faster when the voxel count is small
+    
+    # Arguments
+    - `mask_voxels`: Number of voxels in the mask
+    - `voxel_threshold_warning`: If `mask_voxels` is less than or equal to this value, a warning is displayed
+"""
+
+function optimal_device(mask_voxels, mask_threshold_warning::Union{Tuple{Int64,Int64},Tuple{Int64,Int64,Int64},Nothing}=nothing)
+    if !isnothing(mask_threshold_warning)
+        if mask_voxels <= prod(mask_threshold_warning)
+            @warn "GPU initialization will proceed normally, but due to small voxel count, CPU execution may be faster"
+        end
+    end
+end
+
+"""
     bounding_box(img::AbstractArray{Float64},
                  mask::AbstractArray,
                  verbose::Bool;
@@ -19,7 +37,7 @@
 function bounding_box(img::AbstractArray{Float64},
     mask::AbstractArray,
     verbose::Bool;
-    log_buffer::Union{Vector{String},Nothing}=nothing)::Tuple{AbstractArray{Float64},BitArray}
+    log_buffer::Union{Vector{String},Nothing}=nothing, use_gpu::Bool=false)::Tuple{AbstractArray{Float64},BitArray}
     function _bb_log(msg)
         if !isnothing(log_buffer)
             push!(log_buffer, msg)
@@ -36,6 +54,10 @@ function bounding_box(img::AbstractArray{Float64},
 
     idx = findall(mask .== 1)
     n = ndims(mask)
+
+    if use_gpu
+        optimal_device(length(idx), (128, 128))
+    end
 
     mins = [typemax(Int) for _ in 1:n]
     maxs = [typemin(Int) for _ in 1:n]
