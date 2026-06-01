@@ -8,9 +8,9 @@
     - `voxel_threshold_warning`: If `mask_voxels` is less than or equal to this value, a warning is displayed
 """
 
-function optimal_device(mask_voxels, mask_threshold_warning::Union{Tuple{Int64,Int64},Tuple{Int64,Int64,Int64},Nothing}=nothing)
-    if !isnothing(mask_threshold_warning)
-        if mask_voxels <= prod(mask_threshold_warning)
+function optimal_device(mask_voxels, voxel_threshold_warning::Union{Int64,Nothing}=nothing)
+    if !isnothing(voxel_threshold_warning)
+        if mask_voxels <= voxel_threshold_warning
             @warn "GPU initialization will proceed normally, but due to small voxel count, CPU execution may be faster"
         end
     end
@@ -56,7 +56,7 @@ function bounding_box(img::AbstractArray{Float64},
     n = ndims(mask)
 
     if use_gpu
-        optimal_device(length(idx), (128, 128))
+        optimal_device(length(idx), 128 * 128)
     end
 
     mins = [typemax(Int) for _ in 1:n]
