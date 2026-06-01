@@ -1,7 +1,7 @@
 using LinearAlgebra
 using Statistics
 """ 
-    function calculate_glcm(img::Array{Float64,3}, mask::BitArray{3}, spacing::Vector{Float64}; n_bins::Union{Int,Nothing}=nothing, bin_width::Union{Float64,Nothing}=nothing, verbose::Bool=false)
+    function calculate_glcm(img::Array{Float64,3}, mask::BitArray{3}, spacing::Vector{Float64}; n_bins::Union{Int,Nothing}=nothing, bin_width::Union{Float64,Nothing}=nothing, use_gpu::Bool=false, img_gpu::Union{CuArray,Nothing}=nothing, mask_gpu::Union{CuArray,Nothing}=nothing, mask_indices_gpu::Union{CuArray,Nothing}=nothing, verbose::Bool=false)
 
     Calculates the Gray Level Co-occurrence Matrix (GLCM) for a 3D image within a specified mask.
     You can specify EITHER n_bins OR bin_width, but not both.
@@ -13,6 +13,10 @@ using Statistics
         - `n_bins`: The number of bins for discretizing intensity values (optional).
         - `bin_width`: The width of each bin (optional).
         - `weighting_norm`: The norm used for weighting the GLCM (optional), Weighting method ("infinity (Chebyshev)", "euclidean", "manhattan", "no_weighting", or nothing for no weighting)
+        - `use_gpu`: If true, enables GPU acceleration for computationally intensive operations
+        - `img_gpu`: The input 3D image as a CuArray array stored on the GPU
+        - `mask_gpu`: The region of interest within the image as a CuArray stored on the GPU
+        - `mask_indices_gpu`: The vector of valid ROI indices 
         - `verbose`: If true, enables verbose output for debugging or detailed processing information.
 
     # Returns:
@@ -27,9 +31,9 @@ function calculate_glcm(img::AbstractArray{Float64},
     bin_width::Union{Float64,Nothing}=nothing,
     weighting_norm::Union{String,Nothing}=nothing,
     use_gpu::Bool=false,
-    img_gpu=nothing,
-    mask_gpu=nothing,
-    mask_indices_gpu=nothing,
+    img_gpu::Union{CuArray,Nothing}=nothing,
+    mask_gpu::Union{CuArray,Nothing}=nothing,
+    mask_indices_gpu::Union{CuArray,Nothing}=nothing,
     verbose::Bool=false)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
     if use_gpu
         disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(img_gpu, mask_gpu, mask_indices_gpu; n_bins=n_bins, bin_width=bin_width)
