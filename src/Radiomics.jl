@@ -48,6 +48,7 @@ include("diagnostic_features.jl")
                            and stores them in the result as `"get_raw_matrices"` (Vector of Matrix{Float64}).
     - `slices_2d`: If present, calcule all features on 2d slice - mask, when this parameter is used you can pass 
                             a vector of tuples (plan, slice_idx) where plan is the plane number (1, 2, or 3) and slice_idx is the slice index. 
+    - `features_std`: If true, this parameter return std, min and max of GLCM and GLRLM. 
     - `verbose`: If true, prints progress messages.
         
     # Returns:
