@@ -1,3 +1,9 @@
+struct GPUData
+    img::CuArray
+    mask::CuArray
+    mask_indices::CuArray
+end
+
 """
     init_gpu(img_host::CuArray,
              mask_host::CuArray,

@@ -8,6 +8,7 @@ using CUDA
 
 include("utils/utils_gpu/utils.jl")
 include("utils//utils_gpu/kernels.jl")
+include("utils/utils_gpu/features_gpu.jl")
 
 include("utils/utils_cpu/utils.jl")
 include("glcm_features.jl")
@@ -435,8 +436,10 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
     t_shape2d_features = nothing
 
     img_gpu = mask_gpu = mask_indices_gpu = nothing
+    gpu_data = nothing
     if use_gpu
-        img_gpu, mask_gpu, mask_indices_gpu, use_gpu = init_gpu(img, mask, verbose)
+        img_gpu, mask_gpu, mask_indices_gpu = init_gpu(img, mask, verbose)
+        gpu_data = GPUData(img_gpu, mask_gpu, mask_indices_gpu)
     end
 
     # GLCM features
@@ -449,10 +452,7 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
                 weighting_norm=weighting_norm,
                 features_std=features_std,
                 get_raw_matrices=get_raw_matrices,
-                use_gpu=use_gpu,
-                img_gpu=img_gpu,
-                mask_gpu=mask_gpu,
-                mask_indices_gpu=mask_indices_gpu,
+                gpu_data=gpu_data,
                 verbose=verbose
             )
             (result.value, result.time)

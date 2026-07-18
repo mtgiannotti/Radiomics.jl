@@ -13,10 +13,7 @@ using Statistics
         - `n_bins`: The number of bins for discretizing intensity values (optional).
         - `bin_width`: The width of each bin (optional).
         - `weighting_norm`: The norm used for weighting the GLCM (optional), Weighting method ("infinity (Chebyshev)", "euclidean", "manhattan", "no_weighting", or nothing for no weighting)
-        - `use_gpu`: If true, enables GPU acceleration for computationally intensive operations
-        - `img_gpu`: The input 3D image as a CuArray array stored on the GPU
-        - `mask_gpu`: The region of interest within the image as a CuArray stored on the GPU
-        - `mask_indices_gpu`: The vector of valid ROI indices 
+        - `gpu_data`: Optional object containing copies of the image, mask and ROI indices stored on the GPU. If provided, GPU acceleration is used.
         - `verbose`: If true, enables verbose output for debugging or detailed processing information.
 
     # Returns:
@@ -30,22 +27,10 @@ function calculate_glcm(img::AbstractArray{Float64},
     n_bins::Union{Int,Nothing}=nothing,
     bin_width::Union{Float64,Nothing}=nothing,
     weighting_norm::Union{String,Nothing}=nothing,
-    use_gpu::Bool=false,
-    img_gpu::Union{CuArray,Nothing}=nothing,
-    mask_gpu::Union{CuArray,Nothing}=nothing,
-    mask_indices_gpu::Union{CuArray,Nothing}=nothing,
+    gpu_data::Union{GPUData,Nothing}=nothing,
     verbose::Bool=false)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
-    if use_gpu
-        disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(img_gpu, mask_gpu, mask_indices_gpu; n_bins=n_bins, bin_width=bin_width)
-        if ndims(disc) == 2
-            dirs_x = CuArray([1, 0, 1, 1])
-            dirs_y = CuArray([0, 1, 1, -1])
-            dirs_z = CuArray([0, 0, 0, 0])
-        else
-            dirs_x = CuArray([1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, -1])
-            dirs_y = CuArray([0, 1, 0, 1, -1, 0, 0, 1, 1, 1, 1, -1, 1])
-            dirs_z = CuArray([0, 0, 1, 0, 0, 1, -1, 1, -1, 1, -1, 1, 1])
-        end
+    if gpu_data !== nothing
+        disc, n_levels, gray_levels, bin_width_used = discretize_image_gpu(gpu_data.img, gpu_data.mask, gpu_data.mask_indices; n_bins=n_bins, bin_width=bin_width)
     else
         disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
     end
@@ -78,31 +63,8 @@ function calculate_glcm(img::AbstractArray{Float64},
 
     Ng = length(gray_levels)
     glcm_matrices = Vector{Matrix{Float64}}()
-    if use_gpu
-        min_gl, max_gl = Int.(extrema(gray_levels))
-        lut = CUDA.zeros(Int, max_gl - min_gl + 1)
-
-        @cuda threads = 256 blocks = cld(Ng, 256) lut_kernel!(gray_levels, lut, min_gl, Ng)
-        mapped_disc = CUDA.zeros(Int, size(disc))
-        Nx, Ny = size(mapped_disc)
-        Nz = (dim == 3) ? size(mapped_disc, 3) : 1
-        @cuda threads = 256 blocks = cld(length(disc), 256) mapped_disc_kernel!(disc, mapped_disc, mask_gpu, length(disc), lut, min_gl)
-
-        G_d = CUDA.zeros(Float64, Ng, Ng, length(dirs))
-
-        threads = (16, 16)
-        n = length(mask_indices_gpu)
-        blocks_x = cld(n, threads[1])
-        blocks_y = cld(length(dirs), threads[2])
-        @cuda threads = threads blocks = (blocks_x, blocks_y) glcm_kernel!(G_d, mask_gpu, mask_indices_gpu, mapped_disc, dirs_x, dirs_y, dirs_z, length(dirs_x), Nx, Ny, Nz, n)
-        G_all = Array(G_d)
-
-        for d in axes(G_all, 3)
-            sym_sum = @view G_all[:, :, d]
-            sym_sum .+= sym_sum'
-        end
-        G_all = permutedims(G_all, (3, 1, 2))
-    else
+    if gpu_data === nothing
+        Ng = length(gray_levels)
         sizehint!(glcm_matrices, length(dirs))
 
         min_gl = Int(minimum(gray_levels))
@@ -137,6 +99,8 @@ function calculate_glcm(img::AbstractArray{Float64},
                 end
             end
         end
+    else
+        G_all = compute_glcm_gpu(disc, gray_levels, gpu_data)
     end
 
     weights = ones(Float64, length(dirs))
@@ -182,7 +146,7 @@ function calculate_glcm(img::AbstractArray{Float64},
         glcm_matrices = [summed_glcm]
     end
 
-    use_gpu ? gray_levels = Array(gray_levels) : gray_levels
+    gpu_data !== nothing ? gray_levels = Array(gray_levels) : gray_levels
     return glcm_matrices, gray_levels, bin_width_used
 end
 
@@ -484,20 +448,14 @@ function get_glcm_features(img::AbstractArray{Float64},
     weighting_norm::Union{String,Nothing}=nothing,
     features_std::Bool=false,
     get_raw_matrices::Bool=false,
-    use_gpu::Bool=false,
-    img_gpu=nothing,
-    mask_gpu=nothing,
-    mask_indices_gpu=nothing,
+    gpu_data::Union{GPUData,Nothing}=nothing,
     verbose::Bool=false)::Dict{String,Any}
 
     glcm_matrices, gray_levels, bin_width_used = calculate_glcm(img, mask, voxel_spacing;
         n_bins=n_bins,
         bin_width=bin_width,
         weighting_norm=weighting_norm,
-        use_gpu=use_gpu,
-        img_gpu=img_gpu,
-        mask_gpu=mask_gpu,
-        mask_indices_gpu=mask_indices_gpu,
+        gpu_data=gpu_data,
         verbose=verbose)
 
     if isempty(glcm_matrices)
