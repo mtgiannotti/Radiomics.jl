@@ -36,8 +36,8 @@ end
     - `cropped_mask`: binary mask array (`BitArray`) cropped to the same bounding box."""
 function bounding_box(img::AbstractArray{Float64},
     mask::AbstractArray,
-    use_gpu::Bool=false,
     verbose::Bool;
+    use_gpu::Bool=false,
     log_buffer::Union{Vector{String},Nothing}=nothing)::Tuple{AbstractArray{Float64},BitArray}
     function _bb_log(msg)
         if !isnothing(log_buffer)

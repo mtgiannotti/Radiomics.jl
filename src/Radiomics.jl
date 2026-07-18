@@ -510,6 +510,10 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
                 features_std=features_std,
                 weighting_norm=weighting_norm,
                 get_raw_matrices=get_raw_matrices,
+                use_gpu=use_gpu,
+                img_gpu=img_gpu,
+                mask_gpu=mask_gpu,
+                mask_indices_gpu=mask_indices_gpu,
                 verbose=verbose
             )
             (result.value, result.time)

@@ -6,15 +6,19 @@ using StatsBase
     Calculates and returns a dictionary of GLRLM (Gray Level Run Length Matrix) features.
 """
 function get_glrlm_features(img::AbstractArray{Float64},
-                             mask::BitArray,
-                             voxel_spacing::Vector{Float64};
-                             n_bins::Union{Int,Nothing}=nothing,
-                             bin_width::Union{Float64,Nothing}=nothing,
-                             weighting_norm::Union{String,Nothing}=nothing,
-                             get_raw_matrices::Bool=false,
-                             features_std::Bool=false,
-                             verbose::Bool=false)::Dict{String,Any}
-    
+    mask::BitArray,
+    voxel_spacing::Vector{Float64};
+    n_bins::Union{Int,Nothing}=nothing,
+    bin_width::Union{Float64,Nothing}=nothing,
+    weighting_norm::Union{String,Nothing}=nothing,
+    get_raw_matrices::Bool=false,
+    features_std::Bool=false,
+    use_gpu::Bool=false,
+    img_gpu::Union{CuArray,Nothing}=nothing,
+    mask_gpu::Union{CuArray,Nothing}=nothing,
+    mask_indices_gpu::Union{CuArray,Nothing}=nothing,
+    verbose::Bool=false)::Dict{String,Any}
+
     if verbose
         if !isnothing(n_bins)
             println("Calculating GLRLM with $(n_bins) bins...")
@@ -70,7 +74,7 @@ function get_glrlm_features(img::AbstractArray{Float64},
     return glrlm_features
 end
 
-const Angle = Union{Tuple{Int,Int}, Tuple{Int,Int,Int}}
+const Angle = Union{Tuple{Int,Int},Tuple{Int,Int,Int}}
 
 """
     calculate_glrlm_matrix
@@ -78,11 +82,15 @@ const Angle = Union{Tuple{Int,Int}, Tuple{Int,Int,Int}}
     Calculates the GLRLM matrix. Tracks the real maximum run length 
     dynamically to eliminate downstream computations on empty trailing columns.
 """
-function calculate_glrlm_matrix(discretized_img::Array{Int},
-                                 mask::BitArray,
-                                 voxel_spacing::Vector{Float64},
-                                 weighting_norm::Union{String,Nothing},
-                                 verbose::Bool)::Tuple{Array{Float64,3}, Vector{Angle}}
+function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
+    mask::BitArray,
+    voxel_spacing::Vector{Float64},
+    weighting_norm::Union{String,Nothing},
+    verbose::Bool,
+    img_gpu::Union{CuArray,Nothing}=nothing,
+    mask_gpu::Union{CuArray,Nothing}=nothing,
+    mask_indices_gpu::Union{CuArray,Nothing}=nothing,
+    use_gpu::Bool=false)::Tuple{Array{Float64,3},Vector{Angle}}
     if verbose
         println("Calculating GLRLM matrix...")
     end
@@ -144,8 +152,8 @@ function calculate_glrlm_matrix(discretized_img::Array{Int},
             run_length = 1
             next_idx_cart = curr_idx_cart + c_angle
             while checkbounds(Bool, discretized_img, next_idx_cart) &&
-                  mask[next_idx_cart] &&
-                  discretized_img[next_idx_cart] == gl
+                      mask[next_idx_cart] &&
+                      discretized_img[next_idx_cart] == gl
                 run_length += 1
                 next_idx_cart += c_angle
             end
@@ -169,7 +177,7 @@ function calculate_glrlm_matrix(discretized_img::Array{Int},
             else
                 dists = (abs(angle[1]) * voxel_spacing[1], abs(angle[2]) * voxel_spacing[2], abs(angle[3]) * voxel_spacing[3])
             end
-            
+
             if weighting_norm == "infinity"
                 weights[a_idx] = max(dists...)
             elseif weighting_norm == "euclidean"
@@ -200,21 +208,21 @@ end
     Note: when weighting_norm is used, num_angles == 1 so std will be 0 for all features.
 """
 function extract_all_glrlm_features(P_glrlm::Array{Float64,3},
-                                     gray_levels::Vector{Int},
-                                     feature_names::Vector{String};
-                                     features_std::Bool=false)::Dict{String,Any}
-    num_gl         = length(gray_levels)
+    gray_levels::Vector{Int},
+    feature_names::Vector{String};
+    features_std::Bool=false)::Dict{String,Any}
+    num_gl = length(gray_levels)
     max_run_length = size(P_glrlm, 2)
-    num_angles     = size(P_glrlm, 3)
-    num_features   = length(feature_names)
+    num_angles = size(P_glrlm, 3)
+    num_features = length(feature_names)
 
-    feature_sums    = zeros(Float64, num_features)
+    feature_sums = zeros(Float64, num_features)
     feature_sums_sq = zeros(Float64, num_features)  # used only when features_std=true
-    feature_min     = fill(Inf, num_features)   
-    feature_max     = fill(-Inf, num_features)
+    feature_min = fill(Inf, num_features)
+    feature_max = fill(-Inf, num_features)
 
-    ivector    = Float64.(gray_levels)
-    jvector    = Float64.(1:max_run_length)
+    ivector = Float64.(gray_levels)
+    jvector = Float64.(1:max_run_length)
     ivector_sq = ivector .^ 2
     jvector_sq = jvector .^ 2
 
@@ -233,14 +241,14 @@ function extract_all_glrlm_features(P_glrlm::Array{Float64,3},
 
         fill!(angle_vals, 0.0)  # reset per-angle buffer
 
-        inv_Nr    = 1.0 / Nr
+        inv_Nr = 1.0 / Nr
         inv_Nr_sq = inv_Nr * inv_Nr
 
         sum!(pr, p_slice)
         sum!(pg, p_slice)
 
         # 1D: Run Length metrics (j-dependent)
-        Np      = 0.0
+        Np = 0.0
         u_j_sum = 0.0
         for j in 1:max_run_length
             if pr[j] > 0.0
@@ -252,7 +260,7 @@ function extract_all_glrlm_features(P_glrlm::Array{Float64,3},
                 angle_vals[5] += (pr_j^2) * inv_Nr                # RunLengthNonUniformity
                 angle_vals[6] += (pr_j^2) * inv_Nr_sq             # RunLengthNonUniformityNormalized
 
-                Np      += pr_j * jvector[j]
+                Np += pr_j * jvector[j]
                 u_j_sum += pr_j * jvector[j]
             end
         end
@@ -265,11 +273,11 @@ function extract_all_glrlm_features(P_glrlm::Array{Float64,3},
         u_i_sum = 0.0
         for g in 1:num_gl
             if pg[g] > 0.0
-                i_sq  = ivector_sq[g]
-                pg_g  = pg[g]
+                i_sq = ivector_sq[g]
+                pg_g = pg[g]
 
-                angle_vals[3]  += (pg_g^2) * inv_Nr               # GrayLevelNonUniformity
-                angle_vals[4]  += (pg_g^2) * inv_Nr_sq            # GrayLevelNonUniformityNormalized
+                angle_vals[3] += (pg_g^2) * inv_Nr               # GrayLevelNonUniformity
+                angle_vals[4] += (pg_g^2) * inv_Nr_sq            # GrayLevelNonUniformityNormalized
                 angle_vals[11] += (pg_g / i_sq) * inv_Nr          # LowGrayLevelRunEmphasis
                 angle_vals[12] += (pg_g * i_sq) * inv_Nr          # HighGrayLevelRunEmphasis
 
@@ -314,13 +322,19 @@ function extract_all_glrlm_features(P_glrlm::Array{Float64,3},
             feature_sums[i] += angle_vals[i]
             if features_std
                 feature_sums_sq[i] += angle_vals[i]^2
-                if angle_vals[i] < feature_min[i]; feature_min[i] = angle_vals[i]; end
-                if angle_vals[i] > feature_max[i]; feature_max[i] = angle_vals[i]; end
+                if angle_vals[i] < feature_min[i]
+                    ;
+                    feature_min[i] = angle_vals[i];
+                end
+                if angle_vals[i] > feature_max[i]
+                    ;
+                    feature_max[i] = angle_vals[i];
+                end
             end
         end
     end
 
-    inv_angles     = 1.0 / num_angles
+    inv_angles = 1.0 / num_angles
     glrlm_features = Dict{String,Any}()
 
     for (idx, name) in enumerate(feature_names)
@@ -332,7 +346,7 @@ function extract_all_glrlm_features(P_glrlm::Array{Float64,3},
             variance = max(feature_sums_sq[idx] * inv_angles - mean_val^2, 0.0)
             glrlm_features["glrlm_"*name*"_std"] = sqrt(variance)
             glrlm_features["glrlm_"*name*"_min"] = feature_min[idx]   # <-- aggiunto
-            glrlm_features["glrlm_"*name*"_max"] = feature_max[idx] 
+            glrlm_features["glrlm_"*name*"_max"] = feature_max[idx]
         end
     end
 
