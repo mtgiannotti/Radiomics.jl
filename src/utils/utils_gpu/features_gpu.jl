@@ -1,4 +1,27 @@
-function compute_glcm_gpu(disc, gray_levels, gpu_data)
+"""
+    compute_glcm_gpu(disc::CuArray, gray_levels::CuArray, gpu_data::GPUData)
+
+    Compute the Gray Level Co-occurrence Matrix (GLCM) on the GPU.
+
+    # Arguments
+    - `disc::CuArray`: Discretized image stored on the GPU.
+    - `gray_levels::CuArray`: Gray levels.
+    - `gpu_data::GPUData`: GPU data container containing:
+        - `gpu_data.img`: Original image stored on the GPU.
+        - `gpu_data.mask`: ROI mask stored on the GPU.
+        - `gpu_data.mask_indices`: Linear indices of valid ROI voxels.
+
+    # Returns
+    - `G::Array`: Symmetric GLCM matrices on the CPU.
+
+    # Notes
+    - GLCM accumulation is performed on the GPU using atomic operations.
+    - Symmetrization is performed on the CPU after GPU computation.
+"""
+
+function compute_glcm_gpu(disc::CuArray,
+    gray_levels::CuArray,
+    gpu_data::GPUData)
     dim = ndims(disc)
     if dim == 2
         dirs_x = CuArray([1, 0, 1, 1])

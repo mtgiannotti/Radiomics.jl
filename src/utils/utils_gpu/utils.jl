@@ -60,7 +60,6 @@ end
     - `compatible::Bool`: Flag indicating whether the current system is CUDA compatible
     - `errors::String`: Error messages describing any detected issues
 """
-
 function can_use_cuda()
     errors = ""
     compatible = true
@@ -103,8 +102,7 @@ end
     prefix_sum = [1, 1, 2, 3, 3]
     each element in `prefix_sum` is the position inside `valid_idx` where each thread will write if the mask in that specific position is true
 """
-
-function findall_gpu(mask_device)
+function findall_gpu(mask_device::CuArray)
     vec_mask = vec(mask_device)
     num_of_useful_voxels = CUDA.sum(mask_device)
     valid_idx = CUDA.zeros(Int32, num_of_useful_voxels)
@@ -119,19 +117,20 @@ function findall_gpu(mask_device)
 end
 
 """
-    apply_mask(img::CuArray,
-               mask_indices::CuArray)
+    apply_mask(img::CuDeviceArray,
+               mask_indices::CuDeviceArray)
     Performs boolean indexing on the GPU and returns a 1D vector containing all the elements inside the ROI. CPU counterpart: roi = img[mask]
 
     # Arguments
-    - `img::CuArray`: The input image stored on the GPU as a `CuArray`
-    - `mask_indices::CuArray`: A vector of valid ROI indices 
+    - `img::CuDeviceArray`: The input image stored on the GPU as a `CuArray`
+    - `mask_indices::CuDeviceArray`: A vector of valid ROI indices 
 
     # Returns 
     - `roi::CuArray`: 1D vector containing all the elements inside the ROI
 """
+function apply_mask(img::CuArray,
+    mask_indices::CuArray)
 
-function apply_mask(img, mask_indices)
     n = length(mask_indices)
     roi = CuArray{eltype(img)}(undef, n)
 
@@ -141,35 +140,52 @@ function apply_mask(img, mask_indices)
 end
 
 """
-    discretize_image_gpu(img::CuArray{<:Real},
-                         mask_indices::CuArray,
+    discretize_image_gpu(gpu_data::GPUData;
                          n_bins::Union{Int,Nothing}=nothing,
                          bin_width::Union{<:Real,Nothing}=nothing)
     
-    - Refer to utils/utils_cpu/utils.jl
+    Discretizes the input image for radiomics feature calculation. 
+    Takes into account only the voxels within the provided mask.
 
-    - TODO: use Float64 instead of Float32 for better accuracy
+    You can specify EITHER n_bins (number of bins) OR bin_width (width of each bin), but not both.
+    - If n_bins is specified, bin_width is calculated automatically from the intensity range
+    - If bin_width is specified, the number of bins is calculated automatically
+    - If neither is specified, defaults to bin_width=25.0
+
+    This function is compatible with all radiomics features: GLCM, GLDM, GLRLM, GLSZM, NGTDM, etc.
+
+    # Arguments:
+        - `gpu_data::GPUData`: A container storing GPU arrays:
+            - `gpu_data.img`: The input image as a `CuArray`.
+            - `gpu_data.mask`: The ROI mask as a `CuArray`.
+            - `gpu_data.mask_indices`: Valid mask indices as a `CuArray`.
+        - `n_bins`: The number of discrete gray levels (optional).
+        - `bin_width`: The width of each bin (optional).
+
+    # Returns:
+        - `disc`: The discretized image as a `CuArray` of integers.
+        - `n_bins_actual`: The actual number of discrete gray levels present.
+        - `gray_levels`: A `CuArray` containing the unique gray levels present in the ROI.
+        - `bin_width_used`: The bin width used for discretization.
+
 """
-
-function discretize_image_gpu(img::CuArray{<:Real},
-    mask::CuArray,
-    mask_indices::CuArray;
+function discretize_image_gpu(gpu_data::GPUData;
     n_bins::Union{Int,Nothing}=nothing,
     bin_width::Union{<:Real,Nothing}=nothing,
     vmin::Union{Float64,Nothing}=nothing,
     vmax::Union{Float64,Nothing}=nothing)
 
-    if CUDA.sum(mask) == 0
+    if CUDA.sum(gpu_data.mask) == 0
         return zeros(Int32, size(img_f32)), 0, Int[], 0.0f0
     end
 
     if isnothing(vmin) || isnothing(vmax)
-        vals = view(img, mask)
+        vals = view(gpu_data.img, gpu_data.mask)
         vmin = minimum(vals)
         vmax = maximum(vals)
     end
 
-    disc = CUDA.zeros(Int, size(img))
+    disc = CUDA.zeros(Int, size(gpu_data.img))
 
     if !isnothing(n_bins) && !isnothing(bin_width)
         error("Specify either n_bins or bin_width, not both.")
@@ -177,7 +193,7 @@ function discretize_image_gpu(img::CuArray{<:Real},
         bin_width = 25.0
     end
 
-    n_of_indices = length(mask_indices)
+    n_of_indices = length(gpu_data.mask_indices)
 
     if !isnothing(n_bins)
         bin_width_used = (vmax - vmin) / Float64(n_bins)
@@ -189,7 +205,7 @@ function discretize_image_gpu(img::CuArray{<:Real},
 
         threads = 256
         blocks = cld(n_of_indices, threads)
-        @cuda threads = threads blocks = blocks bin_nbins_kernel!(img, mask_indices, inv_bin_width, n_bins, vmin, disc, n_of_indices)
+        @cuda threads = threads blocks = blocks bin_nbins_kernel!(gpu_data.img, gpu_data.mask_indices, inv_bin_width, n_bins, vmin, disc, n_of_indices)
     else
         bin_width_used = bin_width
         inv_bin_width = 1.0f0 / bin_width_used
@@ -197,15 +213,26 @@ function discretize_image_gpu(img::CuArray{<:Real},
 
         threads = 256
         blocks = cld(n_of_indices, threads)
-        @cuda threads = threads blocks = blocks bin_width_kernel!(img, mask_indices, inv_bin_width, bin_offset, disc, n_of_indices)
+        @cuda threads = threads blocks = blocks bin_width_kernel!(gpu_data.img, gpu_data.mask_indices, inv_bin_width, bin_offset, disc, n_of_indices)
     end
-    gray_levels = unique_gpu(apply_mask(disc, mask_indices))
+    gray_levels = unique_gpu(apply_mask(disc, gpu_data.mask_indices))
     n_bins_actual = length(gray_levels)
 
     return disc, n_bins_actual, gray_levels, bin_width_used
 end
 
-function unique_gpu(img)
+"""
+    unique_gpu(img::CuArray)
+
+Compute the unique values of a `CuArray`
+
+# Arguments
+- `img::CuDeviceArray`: A `CuArray` containing the values for which unique elements should be extracted.
+
+# Returns
+- `uniques::CuArray`: A `CuArray` containing the unique values present in `img`.
+"""
+function unique_gpu(img::CuArray)
     img = sort(img)
     n = length(img)
     is_boundary = CUDA.zeros(Int32, n)
