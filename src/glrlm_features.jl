@@ -13,10 +13,7 @@ function get_glrlm_features(img::AbstractArray{Float64},
     weighting_norm::Union{String,Nothing}=nothing,
     get_raw_matrices::Bool=false,
     features_std::Bool=false,
-    use_gpu::Bool=false,
-    img_gpu::Union{CuArray,Nothing}=nothing,
-    mask_gpu::Union{CuArray,Nothing}=nothing,
-    mask_indices_gpu::Union{CuArray,Nothing}=nothing,
+    gpu_data::Union{GPUData,Nothing}=nothing,
     verbose::Bool=false)::Dict{String,Any}
 
     if verbose
@@ -38,9 +35,13 @@ function get_glrlm_features(img::AbstractArray{Float64},
     glrlm_features = Dict{String,Any}()
 
     # Assuming discretize_image is defined in utils.jl or globally available within the module
-    discretized_img, n_bins_actual, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+    if gpu_data !== nothing
+        discretized_img, n_bins_actual, gray_levels, bin_width_used = discretize_image_gpu(gpu_data; n_bins=n_bins, bin_width=bin_width)
+    else
+        discretized_img, n_bins_actual, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+    end
 
-    P_glrlm, angles = calculate_glrlm_matrix(discretized_img, mask, voxel_spacing, weighting_norm, verbose)
+    P_glrlm, angles = calculate_glrlm_matrix(discretized_img, mask, voxel_spacing, weighting_norm, verbose, gpu_data)
 
     if get_raw_matrices
         if verbose
@@ -64,7 +65,7 @@ function get_glrlm_features(img::AbstractArray{Float64},
         "LongRunHighGrayLevelEmphasis"
     ]
 
-    extracted_features = extract_all_glrlm_features(P_glrlm, gray_levels, feature_names; features_std=features_std)
+    extracted_features = gpu_data === nothing ? extract_all_glrlm_features(P_glrlm, gray_levels, feature_names; features_std=features_std) : extract_all_glrlm_features(P_glrlm, Vector{Int64}(Array(gray_levels)), feature_names; features_std=features_std)
     merge!(glrlm_features, extracted_features)
 
     if verbose
@@ -87,27 +88,12 @@ function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
     voxel_spacing::Vector{Float64},
     weighting_norm::Union{String,Nothing},
     verbose::Bool,
-    img_gpu::Union{CuArray,Nothing}=nothing,
-    mask_gpu::Union{CuArray,Nothing}=nothing,
-    mask_indices_gpu::Union{CuArray,Nothing}=nothing,
-    use_gpu::Bool=false)::Tuple{Array{Float64,3},Vector{Angle}}
+    gpu_data::Union{GPUData,Nothing}=nothing)::Tuple{Array{Float64,3},Vector{Angle}}
     if verbose
         println("Calculating GLRLM matrix...")
     end
 
     dim = ndims(discretized_img)
-
-    masked_img = discretized_img[mask]
-    gray_levels = sort(unique(masked_img))
-    num_gl = length(gray_levels)
-
-    gl_map = Dict{Int,Int}()
-    sizehint!(gl_map, num_gl)
-    @inbounds for (i, gl) in enumerate(gray_levels)
-        gl_map[gl] = i
-    end
-
-    max_run_length_possible = maximum(size(discretized_img))
 
     if dim == 2
         angles = [
@@ -124,49 +110,66 @@ function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
         ]
     end
 
-    num_angles = length(angles)
-    P_glrlm = zeros(Float64, num_gl, max_run_length_possible, num_angles)
+    if gpu_data === nothing
+        masked_img = discretized_img[mask]
+        gray_levels = sort(unique(masked_img))
+        num_gl = length(gray_levels)
 
-    cart_indices = CartesianIndices(size(discretized_img))
-    c_angles = [CartesianIndex(a) for a in angles]
-    masked_cart_indices = cart_indices[mask]
+        gl_map = Dict{Int,Int}()
+        sizehint!(gl_map, num_gl)
+        @inbounds for (i, gl) in enumerate(gray_levels)
+            gl_map[gl] = i
+        end
 
-    # Track the actual maximum run length to scale down the feature extraction phase
-    actual_max_run = 1
+        max_run_length_possible = maximum(size(discretized_img))
 
-    @inbounds for (angle_idx, c_angle) in enumerate(c_angles)
-        for curr_idx_cart in masked_cart_indices
-            gl = discretized_img[curr_idx_cart]
-            gl_idx = gl_map[gl]
+        num_angles = length(angles)
+        P_glrlm = zeros(Float64, num_gl, max_run_length_possible, num_angles)
 
-            # Check if this voxel is the start of a run
-            prev_idx_cart = curr_idx_cart - c_angle
-            if checkbounds(Bool, discretized_img, prev_idx_cart)
-                # Direct indexing using CartesianIndex bypasses LinearIndices overhead
-                if mask[prev_idx_cart] && discretized_img[prev_idx_cart] == gl
-                    continue
+        cart_indices = CartesianIndices(size(discretized_img))
+        c_angles = [CartesianIndex(a) for a in angles]
+        masked_cart_indices = cart_indices[mask]
+
+        # Track the actual maximum run length to scale down the feature extraction phase
+        actual_max_run = 1
+
+        @inbounds for (angle_idx, c_angle) in enumerate(c_angles)
+            for curr_idx_cart in masked_cart_indices
+                gl = discretized_img[curr_idx_cart]
+                gl_idx = gl_map[gl]
+
+                # Check if this voxel is the start of a run
+                prev_idx_cart = curr_idx_cart - c_angle
+                if checkbounds(Bool, discretized_img, prev_idx_cart)
+                    # Direct indexing using CartesianIndex bypasses LinearIndices overhead
+                    if mask[prev_idx_cart] && discretized_img[prev_idx_cart] == gl
+                        continue
+                    end
+                end
+
+                # Count run length along current direction vector
+                run_length = 1
+                next_idx_cart = curr_idx_cart + c_angle
+                while checkbounds(Bool, discretized_img, next_idx_cart) &&
+                          mask[next_idx_cart] &&
+                          discretized_img[next_idx_cart] == gl
+                    run_length += 1
+                    next_idx_cart += c_angle
+                end
+
+                P_glrlm[gl_idx, run_length, angle_idx] += 1.0
+                if run_length > actual_max_run
+                    actual_max_run = run_length
                 end
             end
-
-            # Count run length along current direction vector
-            run_length = 1
-            next_idx_cart = curr_idx_cart + c_angle
-            while checkbounds(Bool, discretized_img, next_idx_cart) &&
-                      mask[next_idx_cart] &&
-                      discretized_img[next_idx_cart] == gl
-                run_length += 1
-                next_idx_cart += c_angle
-            end
-
-            P_glrlm[gl_idx, run_length, angle_idx] += 1.0
-            if run_length > actual_max_run
-                actual_max_run = run_length
-            end
         end
-    end
 
-    # Crop the matrix to the actual maximum run length found
-    P_glrlm = P_glrlm[:, 1:actual_max_run, :]
+        # Crop the matrix to the actual maximum run length found
+        P_glrlm = P_glrlm[:, 1:actual_max_run, :]
+
+    else
+        P_glrlm = compute_glrlm_gpu(gpu_data.mask, gpu_data.mask_indices, discretized_img)
+    end
 
     if !isnothing(weighting_norm)
         weights = ones(Float64, num_angles)

@@ -377,3 +377,21 @@ function glcm_kernel!(G::CuDeviceArray,
 
     return nothing
 end
+
+"""
+    GLRLM related kernels
+"""
+
+function assign_gl_map_values!(gl_values::CuDeviceArray,
+    gray_levels::CuDeviceArray,
+    num_gl::Int)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    if i > num_gl
+        return nothing
+    end
+
+    gl_values[gray_levels[i]] = i
+
+    return nothing
+end

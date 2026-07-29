@@ -1,7 +1,16 @@
+CUDA_THREADS = 256
+CUDA_BLOCK_HEIGHT_2D = 16
+CUDA_BLOCK_WIDTH_2D = 16
+
 struct GPUData
     img::CuArray
     mask::CuArray
     mask_indices::CuArray
+end
+
+struct GPUDict{T}
+    keys::CuArray{T,1}
+    values::CuArray{T,1}
 end
 
 """
@@ -109,7 +118,7 @@ function findall_gpu(mask_device::CuArray)
     prefix_sum = cumsum(Int32.(vec_mask))
     mask_length = length(vec_mask)
 
-    @cuda threads = 256 blocks = cld(mask_length, 256) findall_kernel!(vec_mask, prefix_sum, valid_idx, mask_length)
+    @cuda threads = CUDA_THREADS blocks = cld(mask_length, CUDA_THREADS) findall_kernel!(vec_mask, prefix_sum, valid_idx, mask_length)
 
     CUDA.synchronize()
 
@@ -134,7 +143,7 @@ function apply_mask(img::CuArray,
     n = length(mask_indices)
     roi = CuArray{eltype(img)}(undef, n)
 
-    @cuda threads = 256 blocks = cld(n, 256) assign!(img, mask_indices, roi, n)
+    @cuda threads = CUDA_THREADS blocks = cld(n, CUDA_THREADS) assign!(img, mask_indices, roi, n)
 
     return roi
 end
@@ -203,17 +212,15 @@ function discretize_image_gpu(gpu_data::GPUData;
 
         inv_bin_width = 1.0 / bin_width_used
 
-        threads = 256
-        blocks = cld(n_of_indices, threads)
-        @cuda threads = threads blocks = blocks bin_nbins_kernel!(gpu_data.img, gpu_data.mask_indices, inv_bin_width, n_bins, vmin, disc, n_of_indices)
+        blocks = cld(n_of_indices, CUDA_THREADS)
+        @cuda threads = CUDA_THREADS blocks = blocks bin_nbins_kernel!(gpu_data.img, gpu_data.mask_indices, inv_bin_width, n_bins, vmin, disc, n_of_indices)
     else
         bin_width_used = bin_width
         inv_bin_width = 1.0f0 / bin_width_used
         bin_offset = Int(floor(vmin * inv_bin_width))
 
-        threads = 256
-        blocks = cld(n_of_indices, threads)
-        @cuda threads = threads blocks = blocks bin_width_kernel!(gpu_data.img, gpu_data.mask_indices, inv_bin_width, bin_offset, disc, n_of_indices)
+        blocks = cld(n_of_indices, CUDA_THREADS)
+        @cuda threads = CUDA_THREADS blocks = blocks bin_width_kernel!(gpu_data.img, gpu_data.mask_indices, inv_bin_width, bin_offset, disc, n_of_indices)
     end
     gray_levels = unique_gpu(apply_mask(disc, gpu_data.mask_indices))
     n_bins_actual = length(gray_levels)
@@ -237,13 +244,13 @@ function unique_gpu(img::CuArray)
     n = length(img)
     is_boundary = CUDA.zeros(Int32, n)
 
-    @cuda threads = 256 blocks = cld(n, 256) set_boundaries!(img, is_boundary)
+    @cuda threads = CUDA_THREADS blocks = cld(n, CUDA_THREADS) set_boundaries!(img, is_boundary)
 
     idx = CUDA.cumsum(is_boundary)
     num_of_uniques = Int(CUDA.sum(is_boundary))
 
     uniques = CUDA.zeros(eltype(img), num_of_uniques)
 
-    @cuda threads = 256 blocks = cld(n, 256) assign_uniques!(img, is_boundary, idx, uniques)
+    @cuda threads = CUDA_THREADS blocks = cld(n, CUDA_THREADS) assign_uniques!(img, is_boundary, idx, uniques)
     return uniques
 end
