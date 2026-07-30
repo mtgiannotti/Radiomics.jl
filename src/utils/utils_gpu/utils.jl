@@ -14,15 +14,15 @@ struct GPUDict{T}
 end
 
 """
-    init_gpu(img_host::CuArray,
-             mask_host::CuArray,
-             verbose:Bool)
+    init_gpu(img_host::AbstractArray{Float64},
+             mask_host::AbstractArray,
+             verbose:Bool)::Tuple{CuArray{Float64},CuArray{Bool},CuArray{Int},Bool}
 
     Verifies that the CUDA.jl library and CUDA driver are installed and configured properly,
     and that the hardware is CUDA compatible.
 
     # Arguments
-    - `img_host::AbstractArray`: The input image (2D or 3D array) stored on the CPU
+    - `img_host::AbstractArray{Float64}`: The input image (2D or 3D array) stored on the CPU
     - `mask_host::AbstractArray`: The binary mask defining the region of interest (same shape as `img_host`) stored on the CPU
     - `verbose::Bool`: If `true`, prints a compatibility confirmation message
 
@@ -37,9 +37,9 @@ end
     - `false`: Flag indicating that GPU execution cannot proceed
 """
 
-function init_gpu(img_host::AbstractArray,
+function init_gpu(img_host::AbstractArray{Float64},
     mask_host::AbstractArray,
-    verbose::Bool)
+    verbose::Bool)::Tuple{CuArray{Float64},CuArray{Bool},CuArray{Int},Bool}
     compatible, errors = can_use_cuda()
     if compatible
         if verbose
@@ -59,7 +59,7 @@ function init_gpu(img_host::AbstractArray,
 end
 
 """
-    can_use_cuda()
+    can_use_cuda()::Tuple{Bool,String}
 
     Checks for the correct installation and configuration of CUDA.jl and the CUDA driver 
     
@@ -69,7 +69,7 @@ end
     - `compatible::Bool`: Flag indicating whether the current system is CUDA compatible
     - `errors::String`: Error messages describing any detected issues
 """
-function can_use_cuda()
+function can_use_cuda()::Tuple{Bool,String}
     errors = ""
     compatible = true
 
@@ -87,15 +87,15 @@ function can_use_cuda()
 end
 
 """
-    findall_gpu(mask_device::CuArray)
+    findall_gpu(mask_device::CuArray{Bool})::CuArray{Int}
 
     Scans the mask and extracts all valid ROI indices 
 
     # Arguments
-    - `mask_device::CuArray`: The binary mask defining the region of interest stored on the GPU
+    - `mask_device`: The binary mask defining the region of interest stored on the GPU
 
     # Returns 
-    - `valid_idx::CuArray`: The vector containing all valid ROI indices
+    - `valid_idx`: The vector containing all valid ROI indices
 
     # Implementation
     The function reshapes `mask_device` into a 1D vector called `vec_mask`. Since GPU memory allocation can't be dynamic, the function needs to know allocation size beforehand.
@@ -111,7 +111,7 @@ end
     prefix_sum = [1, 1, 2, 3, 3]
     each element in `prefix_sum` is the position inside `valid_idx` where each thread will write if the mask in that specific position is true
 """
-function findall_gpu(mask_device::CuArray)
+function findall_gpu(mask_device::CuArray{Bool})::CuArray{Int}
     vec_mask = vec(mask_device)
     num_of_useful_voxels = CUDA.sum(mask_device)
     valid_idx = CUDA.zeros(Int32, num_of_useful_voxels)
@@ -126,19 +126,19 @@ function findall_gpu(mask_device::CuArray)
 end
 
 """
-    apply_mask(img::CuDeviceArray,
-               mask_indices::CuDeviceArray)
+    apply_mask(img::CuArray{Int},
+               mask_indices::CuArray{Int})::CuArray{Int}
     Performs boolean indexing on the GPU and returns a 1D vector containing all the elements inside the ROI. CPU counterpart: roi = img[mask]
 
     # Arguments
-    - `img::CuDeviceArray`: The input image stored on the GPU as a `CuArray`
-    - `mask_indices::CuDeviceArray`: A vector of valid ROI indices 
+    - `img`: The input image stored on the GPU as a `CuArray`
+    - `mask_indices`: A vector of valid ROI indices 
 
     # Returns 
-    - `roi::CuArray`: 1D vector containing all the elements inside the ROI
+    - `roi`: 1D vector containing all the elements inside the ROI
 """
-function apply_mask(img::CuArray,
-    mask_indices::CuArray)
+function apply_mask(img::CuArray{Int},
+    mask_indices::CuArray{Int})::CuArray{Int}
 
     n = length(mask_indices)
     roi = CuArray{eltype(img)}(undef, n)
@@ -151,7 +151,7 @@ end
 """
     discretize_image_gpu(gpu_data::GPUData;
                          n_bins::Union{Int,Nothing}=nothing,
-                         bin_width::Union{<:Real,Nothing}=nothing)
+                         bin_width::Union{<:Real,Nothing}=nothing)::Tuple{CuArray{Int},Int,CuArray{Int},Float64}
     
     Discretizes the input image for radiomics feature calculation. 
     Takes into account only the voxels within the provided mask.
@@ -164,7 +164,7 @@ end
     This function is compatible with all radiomics features: GLCM, GLDM, GLRLM, GLSZM, NGTDM, etc.
 
     # Arguments:
-        - `gpu_data::GPUData`: A container storing GPU arrays:
+        - `gpu_data`: A container storing GPU arrays:
             - `gpu_data.img`: The input image as a `CuArray`.
             - `gpu_data.mask`: The ROI mask as a `CuArray`.
             - `gpu_data.mask_indices`: Valid mask indices as a `CuArray`.
@@ -182,7 +182,7 @@ function discretize_image_gpu(gpu_data::GPUData;
     n_bins::Union{Int,Nothing}=nothing,
     bin_width::Union{<:Real,Nothing}=nothing,
     vmin::Union{Float64,Nothing}=nothing,
-    vmax::Union{Float64,Nothing}=nothing)
+    vmax::Union{Float64,Nothing}=nothing)::Tuple{CuArray{Int},Int,CuArray{Int},Float64}
 
     if CUDA.sum(gpu_data.mask) == 0
         return zeros(Int32, size(img_f32)), 0, Int[], 0.0f0
@@ -229,17 +229,17 @@ function discretize_image_gpu(gpu_data::GPUData;
 end
 
 """
-    unique_gpu(img::CuArray)
+    unique_gpu(img::CuArray{Int})::CuArray{Int}
 
 Compute the unique values of a `CuArray`
 
 # Arguments
-- `img::CuDeviceArray`: A `CuArray` containing the values for which unique elements should be extracted.
+- `img`: A `CuArray` containing the values for which unique elements should be extracted.
 
 # Returns
-- `uniques::CuArray`: A `CuArray` containing the unique values present in `img`.
+- `uniques`: A `CuArray` containing the unique values present in `img`.
 """
-function unique_gpu(img::CuArray)
+function unique_gpu(img::CuArray{Int})::CuArray{Int}
     img = sort(img)
     n = length(img)
     is_boundary = CUDA.zeros(Int32, n)

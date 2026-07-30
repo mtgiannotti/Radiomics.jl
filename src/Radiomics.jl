@@ -444,8 +444,22 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
 
     # GLCM features
     if compute_all || :glcm in features
-        t_glcm_features = Threads.@spawn begin
-            result = @timed get_glcm_features(
+        if !use_gpu
+            t_glcm_features = Threads.@spawn begin
+                result = @timed get_glcm_features(
+                    img, mask, voxel_spacing;
+                    n_bins=n_bins,
+                    bin_width=bin_width,
+                    weighting_norm=weighting_norm,
+                    features_std=features_std,
+                    get_raw_matrices=get_raw_matrices,
+                    gpu_data=gpu_data,
+                    verbose=verbose
+                )
+                (result.value, result.time)
+            end
+        else
+            result = @timed CUDA.@sync get_glcm_features(
                 img, mask, voxel_spacing;
                 n_bins=n_bins,
                 bin_width=bin_width,
@@ -455,7 +469,7 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
                 gpu_data=gpu_data,
                 verbose=verbose
             )
-            (result.value, result.time)
+            t_glcm_features = (result.value, result.time)
         end
     end
 
@@ -502,9 +516,25 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
 
     # GLRLM features
     if compute_all || :glrlm in features
-        t_glrlm_features = Threads.@spawn begin
-            result = @timed get_glrlm_features(
-                img, mask, voxel_spacing;
+        if !use_gpu
+            t_glrlm_features = Threads.@spawn begin
+                result = @timed get_glrlm_features(
+                    img, mask, voxel_spacing;
+                    n_bins=n_bins,
+                    bin_width=bin_width,
+                    features_std=features_std,
+                    weighting_norm=weighting_norm,
+                    get_raw_matrices=get_raw_matrices,
+                    gpu_data=gpu_data,
+                    verbose=verbose
+                )
+                (result.value, result.time)
+            end
+        else
+            result = @timed CUDA.@sync get_glrlm_features(
+                img,
+                mask,
+                voxel_spacing;
                 n_bins=n_bins,
                 bin_width=bin_width,
                 features_std=features_std,
@@ -513,7 +543,8 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
                 gpu_data=gpu_data,
                 verbose=verbose
             )
-            (result.value, result.time)
+
+            t_glrlm_features = (result.value, result.time)
         end
     end
 

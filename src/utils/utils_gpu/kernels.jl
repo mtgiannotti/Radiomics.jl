@@ -5,9 +5,9 @@
 """
 
 """
-    findall_kernel!(mask::CuArray,
-                    idx::CuArray,
-                    valid_idx::CuArray,
+    findall_kernel!(mask::CuDeviceArray{Bool},
+                    idx::CuDeviceArray{Int},
+                    valid_idx::CuDeviceArray{Int32},
                     mask_length::Int)
     
     Extracts all valid ROI indices 
@@ -22,9 +22,9 @@
     - `init_gpu` in `utils/utils_gpu/utils.jl`
 """
 
-function findall_kernel!(mask::CuDeviceArray,
-    idx::CuDeviceArray,
-    valid_idx::CuDeviceArray,
+function findall_kernel!(mask::CuDeviceArray{Bool},
+    idx::CuDeviceArray{Int},
+    valid_idx::CuDeviceArray{Int32},
     mask_length::Int)
 
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
@@ -40,10 +40,10 @@ function findall_kernel!(mask::CuDeviceArray,
 end
 
 """
-    assign_uniques!(img::CuDeviceArray,
-                    is_boundary::CuDeviceArray,
-                    idx::CuDeviceArray,
-                    uniques::CuDeviceArray)
+    assign_uniques!(img::CuDeviceArray{Int},
+                    is_boundary::CuDeviceArray{Int32},
+                    idx::CuDeviceArray{Int},
+                    uniques::CuDeviceArray{Int})
 
     Extracts all unique values inside an array 
 
@@ -57,10 +57,10 @@ end
     - `unique_gpu` in `utils/utils_gpu/utils.jl`
 """
 
-function assign_uniques!(img::CuDeviceArray,
-    is_boundary::CuDeviceArray,
-    idx::CuDeviceArray,
-    uniques::CuDeviceArray)
+function assign_uniques!(img::CuDeviceArray{Int},
+    is_boundary::CuDeviceArray{Int32},
+    idx::CuDeviceArray{Int},
+    uniques::CuDeviceArray{Int})
 
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > length(is_boundary)
@@ -74,8 +74,8 @@ function assign_uniques!(img::CuDeviceArray,
 end
 
 """
-    set_boundaries!(x::CuArray,
-                    is_boundary::CuArray)
+    set_boundaries!(xx::CuDeviceArray{Int},
+                    is_boundary::CuDeviceArray{Int32})
 
     Finds boundaries inside a sorted array. Example:
     x = [1, 1, 1, 2, 3, 3, 6, 6, 7]
@@ -89,8 +89,8 @@ end
     - `unique_gpu.jl` in `utils/utils_gpu/utils.jl`
 """
 
-function set_boundaries!(x::CuDeviceArray,
-    is_boundary::CuDeviceArray)
+function set_boundaries!(x::CuDeviceArray{Int},
+    is_boundary::CuDeviceArray{Int32})
 
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > length(x)
@@ -107,9 +107,9 @@ function set_boundaries!(x::CuDeviceArray,
 end
 
 """
-    assign!(img::CuDeviceArray, 
-            mask_indices::CuDeviceArray,
-            roi::CuDeviceArray,
+    assign!(img::CuDeviceArray{Int},
+            mask_indices::CuDeviceArray{Int},
+            roi::CuDeviceArray{Int},
             n::Int)
 
     Extracts the intensity of all voxels belonging to the ROI 
@@ -124,9 +124,9 @@ end
     - `apply_mask` in `utils/utils_gpu/utils.jl`
 """
 
-function assign!(img::CuDeviceArray,
-    mask_indices::CuDeviceArray,
-    roi::CuDeviceArray,
+function assign!(img::CuDeviceArray{Int},
+    mask_indices::CuDeviceArray{Int},
+    roi::CuDeviceArray{Int},
     n::Int)
 
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
@@ -141,10 +141,13 @@ end
 
 
 """
-    bin_nbins_kernel!(img::CuDeviceArray, mask_indices::CuDeviceArray,
-                      inv_bin_width::Float64, n_bins::Int,
-                      vmin::Float64, disc::CuDeviceArray,
-                      n_of_indices::Int)
+    bin_nbins_kernel!(img::CuDeviceArray{Float64}, 
+                    mask_indices::CuDeviceArray{Int},
+                    inv_bin_width::Float64, 
+                    n_bins::Int,
+                    vmin::Float64, 
+                    disc::CuDeviceArray{Int},
+                    n_of_indices::Int)
 
     Each CUDA thread processes one voxel inside the ROI.
 
@@ -161,12 +164,12 @@ end
     # Returns
     Returns `nothing`. The discretized image `disc` is modified directly on the GPU.
 """
-function bin_nbins_kernel!(img::CuDeviceArray,
-    mask_indices::CuDeviceArray,
+function bin_nbins_kernel!(img::CuDeviceArray{Float64},
+    mask_indices::CuDeviceArray{Int},
     inv_bin_width::Float64,
     n_bins::Int,
     vmin::Float64,
-    disc::CuDeviceArray,
+    disc::CuDeviceArray{Int},
     n_of_indices::Int)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > n_of_indices
@@ -182,9 +185,12 @@ end
 
 
 """
-    bin_width_kernel!(img::CuDeviceArray, mask_indices::CuDeviceArray,
-                      inv_bin_width::Float64, bin_offset::Int,
-                      disc::CuDeviceArray, n_of_indices::Int)
+    bin_width_kernel!(img::CuDeviceArray, 
+                    mask_indices::CuDeviceArray{Int},
+                    inv_bin_width::Float64, 
+                    bin_offset::Int,
+                    disc::CuDeviceArray{Int}, 
+                    n_of_indices::Int)
 
     Each CUDA thread processes one voxel inside the ROI.
 
@@ -199,11 +205,11 @@ end
     # Returns
     Returns `nothing`. The discretized image `disc` is modified directly on the GPU.
 """
-function bin_width_kernel!(img::CuDeviceArray,
-    mask_indices::CuDeviceArray,
+function bin_width_kernel!(img::CuDeviceArray{Float64},
+    mask_indices::CuDeviceArray{Int},
     inv_bin_width::Float64,
     bin_offset::Int,
-    disc::CuDeviceArray,
+    disc::CuDeviceArray{Int},
     n_of_indices::Int)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > n_of_indices
@@ -219,7 +225,10 @@ end
 
 
 """
-    lut_kernel!(gray_levels::CuDeviceArray, lut::CuDeviceArray, min_gl::Int, Ng::Int)
+    lut_kernel!(gray_levels::CuDeviceArray{Int}, 
+                lut::CuDeviceArray{Int}, 
+                min_gl::Int, 
+                Ng::Int)
 
     CUDA kernel for constructing a gray level look up table (LUT).
 
@@ -235,8 +244,8 @@ end
     # Returns
     Returns `nothing`. The LUT is modified directly on the GPU.
 """
-function lut_kernel!(gray_levels::CuDeviceArray,
-    lut::CuDeviceArray,
+function lut_kernel!(gray_levels::CuDeviceArray{Int},
+    lut::CuDeviceArray{Int},
     min_gl::Int,
     Ng::Int)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
@@ -250,9 +259,12 @@ end
 
 
 """
-    mapped_disc_kernel!(disc::CuDeviceArray, mapped_disc::CuDeviceArray,
-                        mask::CuDeviceArray, N::Int,
-                        lut::CuDeviceArray, min_gl::Int)
+    mapped_disc_kernel!(disc::CuDeviceArray{Int}, 
+                        mapped_disc::CuDeviceArray{Int},
+                        mask::CuDeviceArray{Bool}, 
+                        N::Int,
+                        lut::CuDeviceArray{Int}, 
+                        min_gl::Int)
 
     CUDA kernel for mapping discretized image gray levels to compact indices.
 
@@ -269,11 +281,11 @@ end
     # Returns
     Returns `nothing`. The mapped discretized image is modified directly on the GPU
 """
-function mapped_disc_kernel!(disc::CuDeviceArray,
-    mapped_disc::CuDeviceArray,
-    mask::CuDeviceArray,
+function mapped_disc_kernel!(disc::CuDeviceArray{Int},
+    mapped_disc::CuDeviceArray{Int},
+    mask::CuDeviceArray{Bool},
     N::Int,
-    lut::CuDeviceArray,
+    lut::CuDeviceArray{Int},
     min_gl::Int)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > N
@@ -288,10 +300,18 @@ function mapped_disc_kernel!(disc::CuDeviceArray,
 end
 
 """
-    glcm_kernel!(G::CuArray, mask::CuArray, mask_indices::CuArray,
-                 mapped_disc::CuArray, dirs_x::CuArray, dirs_y::CuArray,
-                 dirs_z::CuArray, dirs_length::Int, Nx::Int, Ny::Int, Nz::Int,
-                 num_valid::Int)
+    glcm_kernel!(G::CuDeviceArray{Float64}, 
+                mask::CuDeviceArray{ool}, 
+                mask_indices::CuDeviceArray{Int},
+                mapped_disc::CuDeviceArray{Int}, 
+                dirs_x::CuDeviceArray{Int}, 
+                dirs_y::CuDeviceArray{Int},
+                dirs_z::CuDeviceArray{Int}, 
+                dirs_length::Int, 
+                Nx::Int, 
+                Ny::Int, 
+                Nz::Int,
+                num_valid::Int)
 
     CUDA kernel for computing the GLCM matrix.
 
@@ -316,13 +336,13 @@ end
     # Returns
     Returns `nothing`. The GLCM matrix `G` is modified directly on the GPU
 """
-function glcm_kernel!(G::CuDeviceArray,
-    mask::CuDeviceArray,
-    mask_indices::CuDeviceArray,
-    mapped_disc::CuDeviceArray,
-    dirs_x::CuDeviceArray,
-    dirs_y::CuDeviceArray,
-    dirs_z::CuDeviceArray,
+function glcm_kernel!(G::CuDeviceArray{Float64},
+    mask::CuDeviceArray{Bool},
+    mask_indices::CuDeviceArray{Int},
+    mapped_disc::CuDeviceArray{Int},
+    dirs_x::CuDeviceArray{Int},
+    dirs_y::CuDeviceArray{Int},
+    dirs_z::CuDeviceArray{Int},
     dirs_length::Int,
     Nx::Int,
     Ny::Int,
@@ -379,36 +399,66 @@ function glcm_kernel!(G::CuDeviceArray,
 end
 
 """
-    GLRLM related kernels
+    glrlm_kernel!(img::CuArray{Int}, 
+                mask::CuArray{Bool}, 
+                mask_indices::CuArray{Int},
+                gl_lut::CuArray{Int}, 
+                P_glrlm::CuArray{Int}, 
+                actual_max_run::CuArray{Int},
+                Nx::Int, 
+                Ny::Int, 
+                Nz::Int,
+                angles_x::CuArray{Int}, 
+                angles_y::CuArray{Int}, 
+                angles_z::CuArray{Int},
+                num_angles::Int, 
+                num_indices::Int,
+                num_gl::Int, 
+                min_gl::Int, 
+                max_run_length::Int
+    )
+
+    CUDA kernel for computing the Gray Level Run Length Matrix (GLRLM).
+
+    Each CUDA thread processes one voxel/direction pair.
+
+    # Arguments
+    - `img`: Discretized image stored on the GPU.
+    - `mask`: Binary ROI mask stored on the GPU.
+    - `mask_indices`: Indices of valid voxels inside the ROI.
+    - `gl_lut`: Lookup table mapping gray levels to GLRLM indices.
+    - `P_glrlm`: Output GLRLM matrix stored on the GPU.
+    - `actual_max_run`: Single element array storing the maximum detected run length.
+    - `Nx`: Image width.
+    - `Ny`: Image height.
+    - `Nz`: Image depth.
+    - `angles_x`: x components of the run directions.
+    - `angles_y`: y components of the run directions.
+    - `angles_z`: z components of the run directions.
+    - `num_angles`: Number of directions.
+    - `num_indices`: Number of valid voxels in the ROI.
+    - `num_gl`: Number of unique gray levels.
+    - `min_gl`: Minimum gray level in the discretized image.
+    - `max_run_length`: Maximum run length.
+
+    # Returns
+    Returns `nothing`. The GLRLM matrix `P_glrlm` and the maximum run length
+    `actual_max_run` are modified directly on the GPU.
 """
 
-function assign_gl_map_values!(gl_lut::CuDeviceArray,
-    gray_levels::CuDeviceArray,
-    num_gl::Int)
-    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-
-    if i > num_gl
-        return nothing
-    end
-
-    gl_lut[gray_levels[i]+1] = i
-
-    return nothing
-end
-
 function glrlm_kernel!(
-    img::CuDeviceArray,
-    mask::CuDeviceArray,
-    mask_indices::CuDeviceArray,
-    gl_lut::CuDeviceArray,
-    P_glrlm::CuDeviceArray,
-    actual_max_run::CuDeviceArray,
+    img::CuDeviceArray{Int},
+    mask::CuDeviceArray{Bool},
+    mask_indices::CuDeviceArray{Int},
+    gl_lut::CuDeviceArray{Int},
+    P_glrlm::CuDeviceArray{Float64},
+    actual_max_run::CuDeviceArray{Int},
     Nx::Int,
     Ny::Int,
     Nz::Int,
-    angles_x::CuDeviceArray,
-    angles_y::CuDeviceArray,
-    angles_z::CuDeviceArray,
+    angles_x::CuDeviceArray{Int},
+    angles_y::CuDeviceArray{Int},
+    angles_z::CuDeviceArray{Int},
     num_angles::Int,
     num_indices::Int,
     num_gl::Int,

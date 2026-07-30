@@ -1,27 +1,29 @@
 """
-    compute_glcm_gpu(disc::CuArray, gray_levels::CuArray, gpu_data::GPUData)
+    compute_glcm_gpu(disc::CuArray{Int}, 
+                    gray_levels::CuArray{Int}, 
+                    gpu_data::GPUData)::Array{Float64}
 
     Compute the Gray Level Co-occurrence Matrix (GLCM) on the GPU.
 
     # Arguments
-    - `disc::CuArray`: Discretized image stored on the GPU.
-    - `gray_levels::CuArray`: Gray levels.
-    - `gpu_data::GPUData`: GPU data container containing:
+    - `disc`: Discretized image stored on the GPU.
+    - `gray_levels`: Gray levels.
+    - `gpu_data`: GPU data container containing:
         - `gpu_data.img`: Original image stored on the GPU.
         - `gpu_data.mask`: ROI mask stored on the GPU.
         - `gpu_data.mask_indices`: Linear indices of valid ROI voxels.
 
     # Returns
-    - `G::Array`: Symmetric GLCM matrices on the CPU.
+    - `G`: Symmetric GLCM matrices on the CPU.
 
     # Notes
     - GLCM accumulation is performed on the GPU using atomic operations.
     - Symmetrization is performed on the CPU after GPU computation.
 """
 
-function compute_glcm_gpu(disc::CuArray,
-    gray_levels::CuArray,
-    gpu_data::GPUData)
+function compute_glcm_gpu(disc::CuArray{Int},
+    gray_levels::CuArray{Int},
+    gpu_data::GPUData)::Array{Float64}
     dim = ndims(disc)
     if dim == 2
         dirs_x = CuArray([1, 0, 1, 1])
@@ -58,7 +60,24 @@ function compute_glcm_gpu(disc::CuArray,
     return permutedims(G_all, (3, 1, 2))
 end
 
-function compute_glrlm_gpu(mask, mask_indices, discretized_img)
+"""
+    compute_glrlm_gpu(
+        mask::CuArray{Bool},
+        mask_indices::CuArray{Int},
+        discretized_img::CuArray{Int}
+    )::Array{Float64}
+
+    Computes the Gray Level Run Length Matrix (GLRLM) on the GPU.
+
+    # Arguments
+    - `mask`: ROI mask stored on the GPU.
+    - `mask_indices`: Linear indices of valid ROI voxels.
+    - `discretized_img`: Discretized image stored on the GPU.
+
+    # Returns
+    - `Array{Float64}` containing the GLRLM 
+"""
+function compute_glrlm_gpu(mask::CuArray{Bool}, mask_indices::CuArray{Int}, discretized_img::CuArray{Int})::Array{Float64}
     dim = ndims(discretized_img)
 
     if dim == 2
