@@ -9,8 +9,8 @@ struct GPUData
 end
 
 struct GPUDict{T}
-    keys::CuArray{T,1}
-    values::CuArray{T,1}
+    key::CuArray{T,1}
+    value::CuArray{T,1}
 end
 
 """

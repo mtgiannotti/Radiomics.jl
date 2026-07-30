@@ -382,7 +382,7 @@ end
     GLRLM related kernels
 """
 
-function assign_gl_map_values!(gl_values::CuDeviceArray,
+function assign_gl_map_values!(gl_lut::CuDeviceArray,
     gray_levels::CuDeviceArray,
     num_gl::Int)
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
@@ -391,7 +391,114 @@ function assign_gl_map_values!(gl_values::CuDeviceArray,
         return nothing
     end
 
-    gl_values[gray_levels[i]] = i
+    gl_lut[gray_levels[i]+1] = i
 
     return nothing
+end
+
+function glrlm_kernel!(
+    img::CuDeviceArray,
+    mask::CuDeviceArray,
+    mask_indices::CuDeviceArray,
+    gl_lut::CuDeviceArray,
+    P_glrlm::CuDeviceArray,
+    actual_max_run::CuDeviceArray,
+    Nx::Int,
+    Ny::Int,
+    Nz::Int,
+    angles_x::CuDeviceArray,
+    angles_y::CuDeviceArray,
+    angles_z::CuDeviceArray,
+    num_angles::Int,
+    num_indices::Int,
+    num_gl::Int,
+    min_gl::Int,
+    max_run_length::Int
+)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    j = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+
+    if i > num_indices || j > num_angles
+        return
+    end
+
+    dx = angles_x[j]
+    dy = angles_y[j]
+    dz = angles_z[j]
+
+    idx = mask_indices[i]
+
+    gl = img[idx]
+    gl_idx = gl_lut[gl-min_gl+1]
+
+    z = 1
+    r = idx - 1
+
+    if Nz > 1
+        z = fld(r, Nx * Ny) + 1
+        r = r % (Nx * Ny)
+    end
+
+    y = fld(r, Nx) + 1
+    x = (r % Nx) + 1
+
+    prev_x = x - dx
+    prev_y = y - dy
+    prev_z = z - dz
+
+    if prev_x >= 1 && prev_x <= Nx &&
+       prev_y >= 1 && prev_y <= Ny &&
+       (Nz == 1 || (prev_z >= 1 && prev_z <= Nz))
+
+        prev_idx = prev_x +
+                   (prev_y - 1) * Nx +
+                   (prev_z - 1) * Nx * Ny
+
+        if mask[prev_idx] && img[prev_idx] == gl
+            return
+        end
+    end
+
+    run_length = 1
+
+    next_x = x + dx
+    next_y = y + dy
+    next_z = z + dz
+
+    while next_x >= 1 && next_x <= Nx &&
+              next_y >= 1 && next_y <= Ny &&
+              (Nz == 1 || (next_z >= 1 && next_z <= Nz))
+
+        next_idx = next_x +
+                   (next_y - 1) * Nx +
+                   (next_z - 1) * Nx * Ny
+
+        if !(mask[next_idx] && img[next_idx] == gl)
+            break
+        end
+
+        run_length += 1
+
+        next_x += dx
+        next_y += dy
+        next_z += dz
+    end
+
+    if run_length <= max_run_length
+        bin = gl_idx +
+              (run_length - 1) * num_gl +
+              (j - 1) * num_gl * max_run_length
+
+        CUDA.atomic_add!(
+            pointer(P_glrlm, bin),
+            Float64(1)
+        )
+        CUDA.atomic_max!(
+            pointer(actual_max_run, 1),
+            Int(run_length)
+        )
+    end
+
+    return
 end

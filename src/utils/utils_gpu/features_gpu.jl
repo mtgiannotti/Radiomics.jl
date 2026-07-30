@@ -62,29 +62,40 @@ function compute_glrlm_gpu(mask, mask_indices, discretized_img)
     dim = ndims(discretized_img)
 
     if dim == 2
-        angles_x = [1, 0, 1, 1, -1, 0, -1, -1]
-        angles_y = [0, 1, 1, -1, 0, -1, -1, 1]
-        angles_z = [0, 0, 0, 0, 0, 0, 0, 0]
+        angles_x = CuArray([1, 0, 1, 1, -1, 0, -1, -1])
+        angles_y = CuArray([0, 1, 1, -1, 0, -1, -1, 1])
+        angles_z = CuArray([0, 0, 0, 0, 0, 0, 0, 0])
     else
-        angles_x = [1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1]
-        angles_y = [0, 0, 0, -1, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1, -1, 1, -1, 1]
-        angles_z = [0, 0, 0, 0, 1, -1, 0, 0, 0, 0, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1]
+        angles_x = CuArray([1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1])
+        angles_y = CuArray([0, 0, 1, -1, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1, -1, 1, -1, 1])
+        angles_z = CuArray([0, 0, 0, 0, 1, -1, 0, 0, 0, 0, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1])
     end
 
     masked_img = apply_mask(discretized_img, mask_indices)
     gray_levels = unique_gpu(masked_img)
     num_gl = length(gray_levels)
+    min_gl, max_gl = Int.(extrema(gray_levels))
+    gl_lut = CUDA.zeros(Int, max_gl - min_gl + 1)
 
     Nx, Ny = size(discretized_img)
     Nz = (dim == 3) ? size(discretized_img, 3) : 1
-    img_length = length(discretized_img)
+    num_indices = length(mask_indices)
 
-    gl_map = GPUDict(CUDA.zeros(Int, num_gl), CUDA.zeros(Int, num_gl))
-    @cuda threads = CUDA_THREADS blocks = cld(num_gl, CUDA_THREADS) assign_gl_map_values!(gl_map.values, gray_levels, num_gl)
+    @cuda threads = CUDA_THREADS blocks = cld(num_gl, CUDA_THREADS) lut_kernel!(gray_levels, gl_lut, min_gl, num_gl)
 
     max_run_length_possible = maximum(size(discretized_img))
 
     num_angles = length(angles_x)
+
     P_glrlm = CUDA.zeros(Float64, num_gl, max_run_length_possible, num_angles)
-    return zeros(1, 1, 1) #placeholder
+
+    actual_max_run = CUDA.ones(Int, 1)
+
+    blocks_x = cld(num_indices, CUDA_BLOCK_WIDTH_2D)
+    blocks_y = cld(num_angles, CUDA_BLOCK_HEIGHT_2D)
+    @cuda threads = (CUDA_BLOCK_WIDTH_2D, CUDA_BLOCK_HEIGHT_2D) blocks = (blocks_x, blocks_y) glrlm_kernel!(discretized_img, mask, mask_indices, gl_lut, P_glrlm, actual_max_run, Nx, Ny, Nz, angles_x, angles_y, angles_z, num_angles, num_indices, num_gl, min_gl, max_run_length_possible)
+    CUDA.synchronize()
+
+    actual_max = Array(actual_max_run)[1]
+    return Array(P_glrlm[:, 1:actual_max, :])
 end
