@@ -118,3 +118,83 @@ function compute_glrlm_gpu(mask::CuArray{Bool}, mask_indices::CuArray{Int}, disc
     actual_max = Array(actual_max_run)[1]
     return Array(P_glrlm[:, 1:actual_max, :])
 end
+
+function compute_gldm_gpu(
+    discretized_img::CuArray{Int},
+    mask::CuArray{Bool},
+    mask_cpu::BitArray,
+    mask_indices::CuArray{Int},
+    gldm_a::Int)::Tuple{CuArray{Int},CuArray{Int}}
+
+    masked_img = apply_mask(discretized_img, mask_indices)
+
+    gray_levels = unique_gpu(masked_img)
+    num_gl = length(gray_levels)
+    min_gl, max_gl = Int.(extrema(gray_levels))
+    gl_lut = CUDA.zeros(Int, max_gl - min_gl + 1)
+
+    @cuda threads = CUDA_THREADS blocks = cld(num_gl, CUDA_THREADS) lut_kernel!(
+        gray_levels, gl_lut, min_gl, num_gl)
+
+    n_dims = ndims(discretized_img)
+    sz = size(discretized_img)
+
+    Nx, Ny = sz
+    Nz = (n_dims == 3) ? sz[3] : 1
+
+    if n_dims == 2
+        offsets_x = CuArray([-1, -1, -1, 0, 0, 1, 1, 1])
+        offsets_y = CuArray([-1, 0, 1, -1, 1, -1, 0, 1])
+        offsets_z = CuArray([0, 0, 0, 0, 0, 0, 0, 0])
+    else
+        offsets_x = CuArray([-1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+        offsets_y = CuArray([-1, -1, -1, 0, 0, 0, 1, 1, 1, -1, -1, -1, 0, 0, 1, 1, 1, -1, -1, -1, 0, 0, 0, 1, 1, 1])
+        offsets_z = CuArray([-1, 0, 1, -1, 0, 1, -1, 0, 1, -1, 0, 1, -1, 1, -1, 0, 1, -1, 0, 1, -1, 0, 1, -1, 0, 1])
+    end
+    num_offsets = length(offsets_x)
+
+    num_indices = length(mask_indices)
+    is_interior = CUDA.zeros(Int, num_indices)
+    is_border = CUDA.ones(Int, num_indices)
+
+    @cuda threads = CUDA_THREADS blocks = cld(num_indices, CUDA_THREADS) classify_mask_indices!(mask_indices, is_interior, is_border, Nx, Ny, Nz, num_indices)
+
+    interior_mask = CUDA.zeros(Int, sum(is_interior))
+    border_mask = CUDA.zeros(Int, sum(is_border))
+
+    interior_idx = cumsum(is_interior)
+    border_idx = cumsum(is_border)
+
+    @cuda threads = CUDA_THREADS blocks = cld(num_indices, CUDA_THREADS) assign_border_interior!(mask_indices, interior_mask, border_mask, interior_idx, border_idx, is_interior, is_border, num_indices)
+
+    n_int = length(interior_mask)
+    n_bord = length(border_mask)
+
+    max_dependence = 3^n_dims
+    P_gldm = CUDA.zeros(Int, num_gl, max_dependence)
+
+    dep_interior = CUDA.ones(Int, n_int)
+
+    bx = cld(n_int, CUDA_BLOCK_WIDTH_2D)
+    by = cld(num_offsets, CUDA_BLOCK_HEIGHT_2D)
+    @cuda threads = (CUDA_BLOCK_WIDTH_2D, CUDA_BLOCK_HEIGHT_2D) blocks = (bx, by) gldm_interior_dependence!(discretized_img, mask, interior_mask, dep_interior, offsets_x, offsets_y, offsets_z, Nx, Ny, Nz, n_int, num_offsets, gldm_a)
+
+    @cuda threads = CUDA_THREADS blocks = cld(n_int, CUDA_THREADS) gldm_histogram_scatter!(discretized_img, interior_mask, gl_lut, dep_interior, min_gl, P_gldm, n_int)
+
+    dep_border = CUDA.ones(Int, n_bord)
+
+    bx = cld(n_bord, CUDA_BLOCK_WIDTH_2D)
+    by = cld(num_offsets, CUDA_BLOCK_HEIGHT_2D)
+    @cuda threads = (CUDA_BLOCK_WIDTH_2D, CUDA_BLOCK_HEIGHT_2D) blocks = (bx, by) gldm_border_dependence!(discretized_img, mask, border_mask, dep_border, offsets_x, offsets_y, offsets_z, Nx, Ny, Nz, n_bord, num_offsets, gldm_a)
+
+    @cuda threads = CUDA_THREADS blocks = cld(n_bord, CUDA_THREADS) gldm_histogram_scatter!(discretized_img, border_mask, gl_lut, dep_border, min_gl, P_gldm, n_bord)
+
+    col_has_data = vec(any(!iszero, P_gldm; dims=1))
+    col_has_data_cpu = Array(col_has_data)
+    last_col = findlast(col_has_data_cpu)
+    last_col = last_col === nothing ? 0 : last_col
+    P_gldm = P_gldm[:, 1:last_col]
+
+    return P_gldm, gray_levels
+end
+

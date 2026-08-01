@@ -552,3 +552,187 @@ function glrlm_kernel!(
 
     return
 end
+
+function classify_mask_indices!(
+    mask_indices::CuDeviceArray{Int},
+    is_interior::CuDeviceArray{Int},
+    is_border::CuDeviceArray{Int},
+    Nx::Int,
+    Ny::Int,
+    Nz::Int,
+    num_indices::Int)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    if i > num_indices
+        return nothing
+    end
+
+    idx = mask_indices[i]
+
+    z = 1
+    r = idx - 1
+    if Nz > 1
+        z = fld(r, Nx * Ny) + 1
+        r = r % (Nx * Ny)
+    end
+    y = fld(r, Nx) + 1
+    x = (r % Nx) + 1
+
+    interior = 0
+
+    if Nz <= 1
+        if (1 < x < Nx) && (1 < y < Ny)
+            interior = 1
+        end
+    else
+        if (1 < x < Nx) && (1 < y < Ny) && (1 < z < Nz)
+            interior = 1
+        end
+    end
+
+    is_interior[i] = interior
+    is_border[i] = 1 - interior
+
+    return nothing
+end
+
+function assign_border_interior!(mask_indices::CuDeviceArray{Int},
+    interior_mask::CuDeviceArray{Int},
+    border_mask::CuDeviceArray{Int},
+    interior_idx::CuDeviceArray{Int},
+    border_idx::CuDeviceArray{Int},
+    is_interior::CuDeviceArray{Int},
+    is_border::CuDeviceArray{Int},
+    num_indices::Int)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    if i > num_indices
+        return nothing
+    end
+
+    if is_interior[i] == 1
+        interior_mask[interior_idx[i]] = mask_indices[i]
+    else
+        border_mask[border_idx[i]] = mask_indices[i]
+    end
+
+    return nothing
+end
+
+@inline function decode_xyz(idx::Int, Nx::Int, Ny::Int, Nz::Int)
+    z = 1
+    r = idx - 1
+    if Nz > 1
+        z = fld(r, Nx * Ny) + 1
+        r = r % (Nx * Ny)
+    end
+    y = fld(r, Nx) + 1
+    x = (r % Nx) + 1
+    return x, y, z
+end
+
+@inline function encode_xyz(x::Int, y::Int, z::Int, Nx::Int, Ny::Int)
+    return x + (y - 1) * Nx + (z - 1) * Nx * Ny
+end
+
+function gldm_interior_dependence!(
+    discretized_img::CuDeviceArray{Int},
+    mask::CuDeviceArray{Bool},
+    interior_mask::CuDeviceArray{Int},
+    dependence_count::CuDeviceArray{Int},
+    offsets_x::CuDeviceArray{Int},
+    offsets_y::CuDeviceArray{Int},
+    offsets_z::CuDeviceArray{Int},
+    Nx::Int,
+    Ny::Int,
+    Nz::Int,
+    num_interior::Int,
+    num_offsets::Int,
+    gldm_a::Int)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    o = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+
+    if i > num_interior || o > num_offsets
+        return nothing
+    end
+
+    idx = interior_mask[i]
+    x, y, z = decode_xyz(idx, Nx, Ny, Nz)
+
+    nx = x + offsets_x[o]
+    ny = y + offsets_y[o]
+    nz = z + offsets_z[o]
+    nidx = encode_xyz(nx, ny, nz, Nx, Ny)
+
+    gl = discretized_img[idx]
+    if mask[nidx] && abs(gl - discretized_img[nidx]) <= gldm_a
+        CUDA.@atomic dependence_count[i] += 1
+    end
+    return nothing
+end
+
+function gldm_border_dependence!(
+    discretized_img::CuDeviceArray{Int},
+    mask::CuDeviceArray{Bool},
+    border_mask::CuDeviceArray{Int},
+    dependence_count::CuDeviceArray{Int},
+    offsets_x::CuDeviceArray{Int},
+    offsets_y::CuDeviceArray{Int},
+    offsets_z::CuDeviceArray{Int},
+    Nx::Int,
+    Ny::Int,
+    Nz::Int,
+    num_border::Int,
+    num_offsets::Int,
+    gldm_a::Int)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    o = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+
+    if i > num_border || o > num_offsets
+        return nothing
+    end
+
+    idx = border_mask[i]
+    x, y, z = decode_xyz(idx, Nx, Ny, Nz)
+
+    nx = x + offsets_x[o]
+    ny = y + offsets_y[o]
+    nz = z + offsets_z[o]
+
+    if (1 <= nx <= Nx) && (1 <= ny <= Ny) && (1 <= nz <= Nz)
+        nidx = encode_xyz(nx, ny, nz, Nx, Ny)
+        gl = discretized_img[idx]
+        if mask[nidx] && abs(gl - discretized_img[nidx]) <= gldm_a
+            CUDA.@atomic dependence_count[i] += 1
+        end
+    end
+    return nothing
+end
+
+function gldm_histogram_scatter!(
+    discretized_img::CuDeviceArray{Int},
+    idx_list::CuDeviceArray{Int},
+    gl_lut::CuDeviceArray{Int},
+    dependence_count::CuDeviceArray{Int},
+    min_gl::Int,
+    P_gldm::CuDeviceArray{Int},
+    n::Int)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    if i > n
+        return nothing
+    end
+
+    idx = idx_list[i]
+    gl = discretized_img[idx]
+    gl_idx = gl_lut[gl-min_gl+1]
+
+    CUDA.@atomic P_gldm[gl_idx, dependence_count[i]] += 1
+
+    return nothing
+end

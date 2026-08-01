@@ -550,15 +550,28 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
 
     # GLDM features
     if compute_all || :gldm in features
-        t_gldm_features = Threads.@spawn begin
-            result = @timed get_gldm_features(
+        if use_gpu
+            t_gldm_features = Threads.@spawn begin
+                result = @timed get_gldm_features(
+                    img, mask, voxel_spacing;
+                    n_bins=n_bins,
+                    bin_width=bin_width,
+                    get_raw_matrices=get_raw_matrices,
+                    verbose=verbose,
+                    gpu_data=gpu_data
+                )
+                (result.value, result.time)
+            end
+        else
+            result = @timed CUDA.@sync get_gldm_features(
                 img, mask, voxel_spacing;
                 n_bins=n_bins,
                 bin_width=bin_width,
                 get_raw_matrices=get_raw_matrices,
-                verbose=verbose
+                verbose=verbose,
+                gpu_data=gpu_data
             )
-            (result.value, result.time)
+            t_gldm_features = (result.value, result.time)
         end
     end
 
