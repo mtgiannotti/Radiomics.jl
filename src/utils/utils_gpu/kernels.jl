@@ -40,7 +40,7 @@ function findall_kernel!(mask::CuDeviceArray{Bool},
 end
 
 """
-    assign_uniques!(img::CuDeviceArray{Int},
+    assign_uniques!(img::CuDeviceArray{T},
                     is_boundary::CuDeviceArray{Int32},
                     idx::CuDeviceArray{Int},
                     uniques::CuDeviceArray{Int})
@@ -57,10 +57,10 @@ end
     - `unique_gpu` in `utils/utils_gpu/utils.jl`
 """
 
-function assign_uniques!(img::CuDeviceArray{Int},
+function assign_uniques!(img::CuDeviceArray{T},
     is_boundary::CuDeviceArray{Int32},
     idx::CuDeviceArray{Int},
-    uniques::CuDeviceArray{Int})
+    uniques::CuDeviceArray{T}) where T
 
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > length(is_boundary)
@@ -74,7 +74,7 @@ function assign_uniques!(img::CuDeviceArray{Int},
 end
 
 """
-    set_boundaries!(xx::CuDeviceArray{Int},
+    set_boundaries!(xx::CuDeviceArray{T},
                     is_boundary::CuDeviceArray{Int32})
 
     Finds boundaries inside a sorted array. Example:
@@ -89,8 +89,8 @@ end
     - `unique_gpu.jl` in `utils/utils_gpu/utils.jl`
 """
 
-function set_boundaries!(x::CuDeviceArray{Int},
-    is_boundary::CuDeviceArray{Int32})
+function set_boundaries!(x::CuDeviceArray{T},
+    is_boundary::CuDeviceArray{Int32}) where T
 
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i > length(x)
@@ -553,6 +553,31 @@ function glrlm_kernel!(
     return
 end
 
+"""
+    classify_mask_indices!(mask_indices::CuDeviceArray{Int},
+                          is_interior::CuDeviceArray{Int},
+                          is_border::CuDeviceArray{Int},
+                          Nx::Int,
+                          Ny::Int,
+                          Nz::Int,
+                          num_indices::Int)
+
+    Classifies ROI voxels into interior and border voxels.
+
+    Each thread processes one voxel index from `mask_indices`
+
+    # Arguments
+    - `mask_indices`: Linear indices of voxels belonging to the ROI.
+    - `is_interior`: Binary output array indicating interior voxels.
+    - `is_border`: Binary output array indicating border voxels.
+    - `Nx`: Image width.
+    - `Ny`: Image height.
+    - `Nz`: Image depth.
+    - `num_indices`: Number of ROI voxels.
+
+    # Returns
+    Returns `nothing`. The classification arrays are modified directly on the GPU.
+"""
 function classify_mask_indices!(
     mask_indices::CuDeviceArray{Int},
     is_interior::CuDeviceArray{Int},
@@ -597,6 +622,34 @@ function classify_mask_indices!(
     return nothing
 end
 
+"""
+    assign_border_interior!(mask_indices::CuDeviceArray{Int},
+                            interior_mask::CuDeviceArray{Int},
+                            border_mask::CuDeviceArray{Int},
+                            interior_idx::CuDeviceArray{Int},
+                            border_idx::CuDeviceArray{Int},
+                            is_interior::CuDeviceArray{Int},
+                            is_border::CuDeviceArray{Int},
+                            num_indices::Int)
+
+    Separates ROI voxel indices into interior and border lists.
+
+    Each thread writes a voxel index into either the interior or border output
+    array
+
+    # Arguments
+    - `mask_indices`: ROI voxel indices.
+    - `interior_mask`: Output array containing interior voxel indices.
+    - `border_mask`: Output array containing border voxel indices.
+    - `interior_idx`: Write positions for interior voxels.
+    - `border_idx`: Write positions for border voxels.
+    - `is_interior`: Interior classification flags.
+    - `is_border`: Border classification flags.
+    - `num_indices`: Number of ROI voxels.
+
+    # Returns
+    Returns `nothing`. Output arrays are modified directly on the GPU.
+"""
 function assign_border_interior!(mask_indices::CuDeviceArray{Int},
     interior_mask::CuDeviceArray{Int},
     border_mask::CuDeviceArray{Int},
@@ -621,7 +674,21 @@ function assign_border_interior!(mask_indices::CuDeviceArray{Int},
     return nothing
 end
 
-@inline function decode_xyz(idx::Int, Nx::Int, Ny::Int, Nz::Int)
+"""
+    decode_xyz(idx::Int, Nx::Int, Ny::Int, Nz::Int)
+
+    Converts a linear voxel index into 3D coordinates.
+
+    # Arguments
+    - `idx`: Linear voxel index.
+    - `Nx`: Image width.
+    - `Ny`: Image height.
+    - `Nz`: Image depth.
+
+    # Returns
+    Returns `(x, y, z)` coordinates corresponding to the voxel position.
+"""
+@inline function decode_xyz(idx::Int, Nx::Int, Ny::Int, Nz::Int)::Tuple{Int,Int,Int}
     z = 1
     r = idx - 1
     if Nz > 1
@@ -633,10 +700,58 @@ end
     return x, y, z
 end
 
-@inline function encode_xyz(x::Int, y::Int, z::Int, Nx::Int, Ny::Int)
+"""
+    encode_xyz(x::Int, y::Int, z::Int, Nx::Int, Ny::Int)
+
+    Converts 3D voxel coordinates into a linear index.
+
+    # Arguments
+    - `x`: X coordinate.
+    - `y`: Y coordinate.
+    - `z`: Z coordinate.
+    - `Nx`: Image width.
+    - `Ny`: Image height.
+
+    # Returns
+    Returns the linear index corresponding to `(x,y,z)`.
+"""
+@inline function encode_xyz(x::Int, y::Int, z::Int, Nx::Int, Ny::Int)::Int
     return x + (y - 1) * Nx + (z - 1) * Nx * Ny
 end
 
+"""
+    gldm_interior_dependence!(discretized_img::CuDeviceArray{Int},
+                              mask::CuDeviceArray{Bool},
+                              interior_mask::CuDeviceArray{Int},
+                              dependence_count::CuDeviceArray{Int},
+                              offsets_x::CuDeviceArray{Int},
+                              offsets_y::CuDeviceArray{Int},
+                              offsets_z::CuDeviceArray{Int},
+                              Nx::Int,
+                              Ny::Int,
+                              Nz::Int,
+                              num_interior::Int,
+                              num_offsets::Int,
+                              gldm_a::Int)
+
+    Computes gray level dependence counts for interior ROI voxels.
+
+    Each thread evaluates one voxel/offset pair
+
+    # Arguments
+    - `discretized_img`: Discretized image stored on the GPU.
+    - `mask:`: Binary ROI mask.
+    - `interior_mask`: Interior voxel indices.
+    - `dependence_count`: Output dependence counts.
+    - `offsets_x`, `offsets_y`, `offsets_z`: offsets.
+    - `Nx`, `Ny`, `Nz`: Image dimensions.
+    - `num_interior`: Number of interior voxels.
+    - `num_offsets`: Number of neighborhood offsets.
+    - `gldm_a:`: Maximum allowed gray-level difference.
+
+    # Returns
+    Returns `nothing`. Dependence counts are updated directly on the GPU.
+"""
 function gldm_interior_dependence!(
     discretized_img::CuDeviceArray{Int},
     mask::CuDeviceArray{Bool},
@@ -674,6 +789,39 @@ function gldm_interior_dependence!(
     return nothing
 end
 
+"""
+    gldm_border_dependence!(discretized_img::CuDeviceArray{Int},
+                              mask::CuDeviceArray{Bool},
+                              border_mask::CuDeviceArray{Int},
+                              dependence_count::CuDeviceArray{Int},
+                              offsets_x::CuDeviceArray{Int},
+                              offsets_y::CuDeviceArray{Int},
+                              offsets_z::CuDeviceArray{Int},
+                              Nx::Int,
+                              Ny::Int,
+                              Nz::Int,
+                              num_border::Int,
+                              num_offsets::Int,
+                              gldm_a::Int)
+
+    Computes gray level dependence counts for border ROI voxels.
+
+    This kernel is equivalent to `gldm_interior_dependence!` 
+
+    # Arguments
+    - `discretized_img`: Discretized image stored on the GPU.
+    - `mask:`: Binary ROI mask.
+    - `border_mask`: Border voxel indices.
+    - `dependence_count`: Output dependence counts.
+    - `offsets_x`, `offsets_y`, `offsets_z`: offsets.
+    - `Nx`, `Ny`, `Nz`: Image dimensions.
+    - `num_border`: Number of border voxels.
+    - `num_offsets`: Number of neighborhood offsets.
+    - `gldm_a:`: Maximum allowed gray-level difference.
+
+    # Returns
+    Returns `nothing`. Dependence counts are modified directly on the GPU.
+"""
 function gldm_border_dependence!(
     discretized_img::CuDeviceArray{Int},
     mask::CuDeviceArray{Bool},
@@ -713,6 +861,32 @@ function gldm_border_dependence!(
     return nothing
 end
 
+"""
+    gldm_histogram_scatter!(discretized_img::CuDeviceArray{Int},
+                            idx_list::CuDeviceArray{Int},
+                            gl_lut::CuDeviceArray{Int},
+                            dependence_count::CuDeviceArray{Int},
+                            min_gl::Int,
+                            P_gldm::CuDeviceArray{Int},
+                            n::Int)
+
+    Builds the GLDM histogram from voxel dependence counts.
+
+    Each thread maps a voxel gray level and its dependence count into the
+    corresponding GLDM histogram bin
+
+    # Arguments
+    - `discretized_img`: Discretized image.
+    - `idx_list`: List of voxel indices.
+    - `gl_lut`: Gray-level lookup table.
+    - `dependence_count`: Computed dependence values.
+    - `min_gl`: Minimum gray level.
+    - `P_gldm`: Output GLDM matrix.
+    - `n`: Number of voxels.
+
+    # Returns
+    Returns `nothing`. The GLDM matrix is updated directly on the GPU.
+"""
 function gldm_histogram_scatter!(
     discretized_img::CuDeviceArray{Int},
     idx_list::CuDeviceArray{Int},
@@ -737,6 +911,29 @@ function gldm_histogram_scatter!(
     return nothing
 end
 
+"""
+    calculate_cubeindex!(mask::CuDeviceArray{Bool},
+                         cubeindex::CuDeviceArray{Int},
+                         Nx::Int,
+                         Ny::Int,
+                         Nz::Int,
+                         mask_length::Int,
+                         isolevel::Float64)
+
+    Computes Marching Cubes cube indices for a binary volume.
+
+    Each thread evaluates one voxel
+
+    # Arguments
+    - `mask`: Binary volume mask.
+    - `cubeindex`: Output cube configuration indices.
+    - `Nx`, `Ny`, `Nz`: Volume dimensions.
+    - `mask_length`: Total number of voxels.
+    - `isolevel`: Threshold used for classification.
+
+    # Returns
+    Returns `nothing`. Cube indices are stored directly on the GPU.
+"""
 function calculate_cubeindex!(mask::CuDeviceArray{Bool},
     cubeindex::CuDeviceArray{Int},
     Nx::Int,
@@ -790,6 +987,25 @@ function calculate_cubeindex!(mask::CuDeviceArray{Bool},
     return nothing
 end
 
+"""
+    count_triangles!(cube_indices::CuDeviceArray{Int},
+                     triangle_count::CuDeviceArray{Int},
+                     casesClassic::CuDeviceArray,
+                     Nx::Int,
+                     Ny::Int,
+                     Nz::Int)
+
+    Counts the number of triangles generated
+
+    # Arguments
+    - `cube_indices`: Cube indices.
+    - `triangle_count`: Output triangle counts.
+    - `casesClassic`: Marching Cubes lookup table.
+    - `Nx`, `Ny`, `Nz`: Volume dimensions.
+
+    # Returns
+    Returns `nothing`. Triangle counts are written directly on the GPU.
+"""
 function count_triangles!(cube_indices::CuDeviceArray{Int},
     triangle_count::CuDeviceArray{Int},
     casesClassic::CuDeviceArray,
@@ -816,6 +1032,40 @@ function count_triangles!(cube_indices::CuDeviceArray{Int},
 
 end
 
+"""
+    generate_triangles!(mask::CuDeviceArray{Bool},
+                        triangles::CuDeviceArray{Triangle3D},
+                        triangles_count::CuDeviceArray{Int},
+                        triangles_idx::CuDeviceArray{Int},
+                        cube_indices::CuDeviceArray{Int},
+                        spacing::CuDeviceArray{Float64},
+                        casesClassic::CuDeviceArray,
+                        nx::Int,
+                        ny::Int,
+                        nz::Int,
+                        num_triangles::Int,
+                        isolevel::Float64)
+
+    Generates Marching Cubes triangles from cube configurations.
+
+    Each CUDA thread processes one cube, computes the vertices,
+    and writes the resulting triangles into the output array.
+
+    # Arguments
+    - `mask`: Binary input volume.
+    - `triangles`: Output triangle array.
+    - `triangles_count`: Number of triangles per cube.
+    - `triangles_idx`: Prefix sum offsets for triangle placement.
+    - `cube_indices`: Marching Cubes cube configurations.
+    - `spacing`: Physical voxel spacing.
+    - `casesClassic`: Marching Cubes lookup table.
+    - `nx`, `ny`, `nz`: Volume dimensions.
+    - `num_triangles`: Total number of output triangles.
+    - `isolevel`: Threshold.
+
+    # Returns
+    Returns `nothing`. Output triangle array is written directly on the GPU.
+"""
 function generate_triangles!(mask::CuDeviceArray{Bool},
     triangles::CuDeviceArray{Triangle3D},
     triangles_count::CuDeviceArray{Int},
@@ -880,6 +1130,97 @@ function generate_triangles!(mask::CuDeviceArray{Bool},
 
         triangle_number += 1
         i += 3
+    end
+
+    return nothing
+end
+
+"""
+    all_verts_kernel!(triangles::CuDeviceArray{Triangle3D},
+                      all_verts::CuDeviceArray{Point3D},
+                      num_triangles::Int)
+
+    # Arguments
+    - `triangles::CuDeviceArray`: Input triangle list.
+    - `all_verts::CuDeviceArray`: Output vertex array.
+    - `num_triangles::Int`: Number of triangles.
+
+    # Returns
+    Returns `nothing`. Vertices are stored directly on the GPU.
+"""
+
+function all_verts_kernel!(
+    triangles::CuDeviceArray{Triangle3D},
+    all_verts::CuDeviceArray{Point3D},
+    num_triangles::Int)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    if i > num_triangles
+        return nothing
+    end
+
+    a, b, c = triangles[i]
+    k = 3i - 2
+
+    all_verts[k] = a
+    all_verts[k+1] = b
+    all_verts[k+2] = c
+
+    return nothing
+end
+
+"""
+    diam2d_kernel!(verts::CuDeviceArray{Point3D},
+                   d_slice::CuDeviceArray{Float64,1},
+                   d_row::CuDeviceArray{Float64,1},
+                   d_column::CuDeviceArray{Float64,1},
+                   num_verts::Int)
+
+    Computes maximum distances between vertices
+
+    # Arguments
+    - `verts::CuDeviceArray`: 
+    - `d_slice::CuDeviceArray`: 
+    - `d_row::CuDeviceArray`: 
+    - `d_column::CuDeviceArray`:
+    - `num_verts::Int`: Number of vertices.
+
+    # Returns
+    Returns `nothing`. Distance values are updated atomically on the GPU.
+"""
+function diam2d_kernel!(verts::CuDeviceArray{Point3D},
+    d_slice::CuDeviceArray{Float64,1},
+    d_row::CuDeviceArray{Float64,1},
+    d_column::CuDeviceArray{Float64,1},
+    num_verts)
+
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    if i > num_verts
+        return nothing
+    end
+
+    a = verts[i]
+    for j in (i+1):num_verts
+        b = verts[j]
+        dx = a[1] - b[1]
+        dy = a[2] - b[2]
+        dz = a[3] - b[3]
+        dist2 = dx * dx + dy * dy + dz * dz
+
+        if a[3] == b[3]
+            CUDA.@atomic d_slice[1] = max(d_slice[1], dist2)
+        end
+
+        if a[2] == b[2]
+            CUDA.@atomic d_row[1] = max(d_row[1], dist2)
+        end
+
+        if a[1] == b[1]
+            CUDA.@atomic d_column[1] = max(d_column[1], dist2)
+        end
+
     end
 
     return nothing

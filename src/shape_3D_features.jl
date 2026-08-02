@@ -397,7 +397,11 @@ function get_shape3d_features(mask::AbstractArray{<:Real,3},
     end
 
     verbose && println("[Main Thread] Running Marching Cubes...")
-    triangles = gpu_data === nothing ? marching_cubes_surface(processed_mask, spacing) : marching_cubes_surface_gpu(CuArray(processed_mask), CuArray(spacing))
+    if gpu_data === nothing
+        triangles = marching_cubes_surface(processed_mask, spacing)
+    else
+        triangles, triangles_gpu = marching_cubes_surface_gpu(CuArray(processed_mask), CuArray(spacing))
+    end
 
     task_geom = Threads.@spawn begin
         verbose && println("[Thread 2] Calculating surface features...")
@@ -412,18 +416,22 @@ function get_shape3d_features(mask::AbstractArray{<:Real,3},
         maximum_3d_diameter(triangles)
     end
 
-    task_diam2d = Threads.@spawn begin
-        verbose && println("[Thread 4] Calculating 2D diameters from mesh...")
-        all_verts = Vector{Point3D}(undef, length(triangles) * 3)
-        k = 1
-        for (a, b, c) in triangles
-            all_verts[k] = a
-            all_verts[k+1] = b
-            all_verts[k+2] = c
-            k += 3
+    if gpu_data === nothing
+        task_diam2d = Threads.@spawn begin
+            verbose && println("[Thread 4] Calculating 2D diameters from mesh...")
+            all_verts = Vector{Point3D}(undef, length(triangles) * 3)
+            k = 1
+            for (a, b, c) in triangles
+                all_verts[k] = a
+                all_verts[k+1] = b
+                all_verts[k+2] = c
+                k += 3
+            end
+            unique!(all_verts)
+            maximum_2d_diameters_from_vertices(all_verts)
         end
-        unique!(all_verts)
-        maximum_2d_diameters_from_vertices(all_verts)
+    else
+        task_diam2d = calculate_diam2d_gpu(triangles_gpu, verbose)
     end
 
     vol_voxel = voxel_volume(processed_mask, spacing)

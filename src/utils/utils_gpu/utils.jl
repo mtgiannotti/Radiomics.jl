@@ -234,7 +234,7 @@ function discretize_image_gpu(gpu_data::GPUData;
 end
 
 """
-    unique_gpu(img::CuArray{Int})::CuArray{Int}
+    unique_gpu(img::CuArray{T})::CuArray{T}
 
 Compute the unique values of a `CuArray`
 
@@ -244,7 +244,7 @@ Compute the unique values of a `CuArray`
 # Returns
 - `uniques`: A `CuArray` containing the unique values present in `img`.
 """
-function unique_gpu(img::CuArray{Int})::CuArray{Int}
+function unique_gpu(img::CuArray{T})::CuArray{T} where T
     img = sort(img)
     n = length(img)
     is_boundary = CUDA.zeros(Int32, n)
@@ -254,7 +254,7 @@ function unique_gpu(img::CuArray{Int})::CuArray{Int}
     idx = CUDA.cumsum(is_boundary)
     num_of_uniques = Int(CUDA.sum(is_boundary))
 
-    uniques = CUDA.zeros(eltype(img), num_of_uniques)
+    uniques = CuArray{T}(undef, num_of_uniques)
 
     @cuda threads = CUDA_THREADS blocks = cld(n, CUDA_THREADS) assign_uniques!(img, is_boundary, idx, uniques)
     return uniques

@@ -550,7 +550,7 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
 
     # GLDM features
     if compute_all || :gldm in features
-        if use_gpu
+        if !use_gpu
             t_gldm_features = Threads.@spawn begin
                 result = @timed get_gldm_features(
                     img, mask, voxel_spacing;

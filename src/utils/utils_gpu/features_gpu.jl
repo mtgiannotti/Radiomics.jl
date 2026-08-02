@@ -20,7 +20,6 @@
     - GLCM accumulation is performed on the GPU using atomic operations.
     - Symmetrization is performed on the CPU after GPU computation.
 """
-
 function compute_glcm_gpu(disc::CuArray{Int},
     gray_levels::CuArray{Int},
     gpu_data::GPUData)::Array{Float64}
@@ -119,6 +118,27 @@ function compute_glrlm_gpu(mask::CuArray{Bool}, mask_indices::CuArray{Int}, disc
     return Array(P_glrlm[:, 1:actual_max, :])
 end
 
+"""
+    compute_gldm_gpu(discretized_img::CuArray{Int},
+                     mask::CuArray{Bool},
+                     mask_cpu::BitArray,
+                     mask_indices::CuArray{Int},
+                     gldm_a::Int)::Tuple{CuArray{Int},CuArray{Int}}
+
+    Computes the Gray Level Dependence Matrix (GLDM) on the GPU.
+
+    # Arguments
+    - `discretized_img::CuArray`: Discretized image stored on the GPU.
+    - `mask::CuArray{Bool}`: ROI mask stored on the GPU.
+    - `mask_cpu::BitArray`: CPU copy of the ROI mask.
+    - `mask_indices::CuArray{Int}`: Linear indices of ROI voxels.
+    - `gldm_a::Int`: Maximum gray-level difference allowed for dependence.
+
+    # Returns
+    - `Tuple{CuArray{Int}, CuArray{Int}}`:
+        - `P_gldm`: GLDM matrix.
+        - `gray_levels`: Unique gray levels present in the ROI.
+"""
 function compute_gldm_gpu(
     discretized_img::CuArray{Int},
     mask::CuArray{Bool},
@@ -198,9 +218,25 @@ function compute_gldm_gpu(
     return P_gldm, gray_levels
 end
 
+"""
+    marching_cubes_surface_gpu(mask::CuArray{Bool,3},
+                               spacing::CuArray{Float64},
+                               isolevel::Float64=0.5
+                              )::Tuple{Vector{Triangle3D},CuArray{Triangle3D}}
+
+    # Arguments
+    - `mask::CuArray{Bool,3}`: Binary 3D mask stored on the GPU.
+    - `spacing::CuArray{Float64}`: Physical voxel spacing.
+    - `isolevel::Float64`: Threshold.
+
+    # Returns
+    - `Tuple{Vector{Triangle3D}, CuArray{Triangle3D}}`:
+        - Triangle array stored on the CPU.
+        - Triangle array stored on the GPU.
+"""
 function marching_cubes_surface_gpu(mask::CuArray{Bool,3},
     spacing::CuArray{Float64},
-    isolevel::Float64=0.5)::Vector{Triangle3D}
+    isolevel::Float64=0.5)::Tuple{Vector{Triangle3D},CuArray{Triangle3D}}
 
     include("src/utils/utils_gpu/shape_3D_features_lookup_tables_gpu.jl")
 
@@ -226,6 +262,59 @@ function marching_cubes_surface_gpu(mask::CuArray{Bool,3},
 
     @cuda threads = (CUDA_BLOCK_WIDTH_3D, CUDA_BLOCK_HEIGHT_3D, CUDA_BLOCK_DEPTH_3D) blocks = (blocks_x, blocks_y, blocks_z) generate_triangles!(mask, triangles, triangle_count, triangles_idx, cube_indices, spacing, casesClassic_gpu, Nx, Ny, Nz, num_of_triangles, isolevel)
 
-    return Array(triangles)
+    return Array(triangles), triangles
 
+end
+
+"""
+    maximum_2d_diameters_from_vertices_gpu(
+        verts::CuArray{Point3D}
+    )::NTuple{3,Float64}
+
+    Computes maximum vertex distances
+
+    # Arguments
+    - `verts::CuArray{Point3D}`: Mesh vertices stored on the GPU.
+
+    # Returns
+    - `NTuple{3,Float64}` containing:
+"""
+function maximum_2d_diameters_from_vertices_gpu(verts::CuArray{Point3D})::NTuple{3,Float64}
+    n = length(verts)
+    n < 2 && return (0.0, 0.0, 0.0)
+
+    d_slice = CUDA.zeros(Float64, 1)
+    d_row = CUDA.zeros(Float64, 1)
+    d_column = CUDA.zeros(Float64, 1)
+
+    @cuda threads = CUDA_THREADS blocks = cld(n, CUDA_THREADS) diam2d_kernel!(verts, d_slice, d_row, d_column, n)
+    return sqrt(Array(d_slice)[1]), sqrt(Array(d_row)[1]), sqrt(Array(d_column)[1])
+end
+
+"""
+    calculate_diam2d_gpu(triangles::CuArray{Triangle3D},
+                         verbose::Bool)::Point3D
+
+    Computes the maximum 2D diameters of a mesh on the GPU.
+
+    # Arguments
+    - `triangles::CuArray{Triangle3D}`: Mesh triangles stored on the GPU.
+    - `verbose::Bool`:
+
+    # Returns
+    - `Point3D`: Maximum 2D diameters
+"""
+function calculate_diam2d_gpu(triangles::CuArray{Triangle3D}, verbose::Bool)::Point3D
+    verbose && println("Calculating 2D diameters from mesh on the GPU...")
+
+    num_triangles = length(triangles)
+    all_verts = CuArray{Point3D}(undef, length(triangles) * 3)
+
+    @cuda threads = CUDA_THREADS blocks = cld(num_triangles, CUDA_THREADS) all_verts_kernel!(triangles, all_verts, num_triangles)
+
+    all_verts = unique_gpu(all_verts)
+
+    diam2d = maximum_2d_diameters_from_vertices_gpu(all_verts)
+
+    return diam2d
 end
