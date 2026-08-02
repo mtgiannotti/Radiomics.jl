@@ -61,7 +61,7 @@ function marching_cubes_surface(mask::BitArray{3},
     triangles = Vector{Triangle3D}()
     sizehint!(triangles, count(mask) * 2)
 
-    @inbounds for z in 1:nz-1, y in 1:ny-1, x in 1:nx-1
+    @inbounds for z in 1:(nz-1), y in 1:(ny-1), x in 1:(nx-1)
 
         v0 = Float64(mask[x, y, z])
         v1 = Float64(mask[x+1, y, z])
@@ -141,9 +141,9 @@ function maximum_2d_diameters_from_vertices(verts::Vector{Point3D})::NTuple{3,Fl
     d_row = 0.0
     d_column = 0.0
 
-    @inbounds for i in 1:n-1
+    @inbounds for i in 1:(n-1)
         a = verts[i]
-        for j in i+1:n
+        for j in (i+1):n
             b = verts[j]
             dx = a[1] - b[1]
             dy = a[2] - b[2]
@@ -253,7 +253,7 @@ function maximum_3d_diameter(triangles::Vector{Triangle3D})::Float64
         end
     end
 
-    @inbounds for i in 1:nv-1
+    @inbounds for i in 1:(nv-1)
         # Outer pruning: if twice the distance of P_i from the center does not exceed the current diameter,
         # no subsequent point (being closer to the center) can ever form a larger diameter.
         if 2.0 * d_center_sorted[i] <= max_d
@@ -261,7 +261,7 @@ function maximum_3d_diameter(triangles::Vector{Triangle3D})::Float64
         end
 
         pi = verts_sorted[i]
-        for j in i+1:nv
+        for j in (i+1):nv
             # Inner pruning: if the sum of the distances of P_i and P_j from the center does not exceed the diameter,
             # the same applies to all points P_k with k >= j.
             if d_center_sorted[i] + d_center_sorted[j] <= max_d
@@ -371,7 +371,8 @@ function get_shape3d_features(mask::AbstractArray{<:Real,3},
     verbose::Bool=false,
     keep_largest_only::Bool=true,
     pad_width::Int=1,
-    threshold::Float64=0.5)::Dict{String,Any}
+    threshold::Float64=0.5,
+    gpu_data::Union{GPUData,Nothing}=nothing)::Dict{String,Any}
 
     verbose && println("Extracting 3D shape features...")
 
@@ -396,7 +397,7 @@ function get_shape3d_features(mask::AbstractArray{<:Real,3},
     end
 
     verbose && println("[Main Thread] Running Marching Cubes...")
-    triangles = marching_cubes_surface(processed_mask, spacing)
+    triangles = gpu_data === nothing ? marching_cubes_surface(processed_mask, spacing) : marching_cubes_surface_gpu(CuArray(processed_mask), CuArray(spacing))
 
     task_geom = Threads.@spawn begin
         verbose && println("[Thread 2] Calculating surface features...")

@@ -198,3 +198,34 @@ function compute_gldm_gpu(
     return P_gldm, gray_levels
 end
 
+function marching_cubes_surface_gpu(mask::CuArray{Bool,3},
+    spacing::CuArray{Float64},
+    isolevel::Float64=0.5)::Vector{Triangle3D}
+
+    include("src/utils/utils_gpu/shape_3D_features_lookup_tables_gpu.jl")
+
+    mask_length = length(mask)
+    mask_size = size(mask)
+    (Nx, Ny, Nz) = (mask_size[1] - 1, mask_size[2] - 1, mask_size[3] - 1)
+
+    cube_indices = CUDA.zeros(Int, Nx, Ny, Nz)
+    # how many triangles every voxel generates
+    triangle_count = CUDA.zeros(Int, Nx, Ny, Nz)
+
+    blocks_x = cld(Nx, CUDA_BLOCK_WIDTH_3D)
+    blocks_y = cld(Ny, CUDA_BLOCK_HEIGHT_3D)
+    blocks_z = cld(Nz, CUDA_BLOCK_DEPTH_3D)
+    @cuda threads = (CUDA_BLOCK_WIDTH_3D, CUDA_BLOCK_HEIGHT_3D, CUDA_BLOCK_DEPTH_3D) blocks = (blocks_x, blocks_y, blocks_z) calculate_cubeindex!(mask, cube_indices, Nx, Ny, Nz, mask_length, isolevel)
+
+    @cuda threads = (CUDA_BLOCK_WIDTH_3D, CUDA_BLOCK_HEIGHT_3D, CUDA_BLOCK_DEPTH_3D) blocks = (blocks_x, blocks_y, blocks_z) count_triangles!(cube_indices, triangle_count, casesClassic_gpu, Nx, Ny, Nz)
+
+    counts = vec(triangle_count)
+    triangles_idx = cumsum(counts) .- counts
+    num_of_triangles = sum(triangle_count)
+    triangles = CuArray{Triangle3D}(undef, num_of_triangles)
+
+    @cuda threads = (CUDA_BLOCK_WIDTH_3D, CUDA_BLOCK_HEIGHT_3D, CUDA_BLOCK_DEPTH_3D) blocks = (blocks_x, blocks_y, blocks_z) generate_triangles!(mask, triangles, triangle_count, triangles_idx, cube_indices, spacing, casesClassic_gpu, Nx, Ny, Nz, num_of_triangles, isolevel)
+
+    return Array(triangles)
+
+end

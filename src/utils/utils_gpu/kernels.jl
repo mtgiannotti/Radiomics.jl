@@ -736,3 +736,151 @@ function gldm_histogram_scatter!(
 
     return nothing
 end
+
+function calculate_cubeindex!(mask::CuDeviceArray{Bool},
+    cubeindex::CuDeviceArray{Int},
+    Nx::Int,
+    Ny::Int,
+    Nz::Int,
+    mask_length::Int,
+    isolevel::Float64)
+    x = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    y = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+    z = threadIdx().z + (blockIdx().z - 1) * blockDim().z
+
+    if x > Nx || y > Ny || z > Nz
+        return nothing
+    end
+
+    v0 = Float64(mask[x, y, z])
+    v1 = Float64(mask[x+1, y, z])
+    v2 = Float64(mask[x+1, y+1, z])
+    v3 = Float64(mask[x, y+1, z])
+    v4 = Float64(mask[x, y, z+1])
+    v5 = Float64(mask[x+1, y, z+1])
+    v6 = Float64(mask[x+1, y+1, z+1])
+    v7 = Float64(mask[x, y+1, z+1])
+
+    cubeindex[x, y, z] = 0
+    if v0 > isolevel
+        cubeindex[x, y, z] |= 1
+    end
+    if v1 > isolevel
+        cubeindex[x, y, z] |= 2
+    end
+    if v2 > isolevel
+        cubeindex[x, y, z] |= 4
+    end
+    if v3 > isolevel
+        cubeindex[x, y, z] |= 8
+    end
+    if v4 > isolevel
+        cubeindex[x, y, z] |= 16
+    end
+    if v5 > isolevel
+        cubeindex[x, y, z] |= 32
+    end
+    if v6 > isolevel
+        cubeindex[x, y, z] |= 64
+    end
+    if v7 > isolevel
+        cubeindex[x, y, z] |= 128
+    end
+
+    return nothing
+end
+
+function count_triangles!(cube_indices::CuDeviceArray{Int},
+    triangle_count::CuDeviceArray{Int},
+    casesClassic::CuDeviceArray,
+    Nx::Int,
+    Ny::Int,
+    Nz::Int)
+    x = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    y = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+    z = threadIdx().z + (blockIdx().z - 1) * blockDim().z
+
+    if x > Nx || y > Ny || z > Nz
+        return nothing
+    end
+
+    triangle_sum = 0
+    for k in 1:16
+        val = casesClassic[cube_indices[x, y, z]+1, k]
+        val != -1 ? triangle_sum += 1 : break
+    end
+
+    triangle_count[x, y, z] = Int(triangle_sum/3)
+
+    return nothing
+
+end
+
+function generate_triangles!(mask::CuDeviceArray{Bool},
+    triangles::CuDeviceArray{Triangle3D},
+    triangles_count::CuDeviceArray{Int},
+    triangles_idx::CuDeviceArray{Int},
+    cube_indices::CuDeviceArray{Int},
+    spacing::CuDeviceArray{Float64},
+    casesClassic::CuDeviceArray,
+    nx::Int,
+    ny::Int,
+    nz::Int,
+    num_triangles::Int,
+    isolevel::Float64)
+
+    x = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    y = threadIdx().y + (blockIdx().y - 1) * blockDim().y
+    z = threadIdx().z + (blockIdx().z - 1) * blockDim().z
+
+    if x > nx || y > ny || z > nz
+        return nothing
+    end
+
+    lin_idx = encode_xyz(x, y, z, nx, ny)
+
+    v0 = Float64(mask[x, y, z])
+    v1 = Float64(mask[x+1, y, z])
+    v2 = Float64(mask[x+1, y+1, z])
+    v3 = Float64(mask[x, y+1, z])
+    v4 = Float64(mask[x, y, z+1])
+    v5 = Float64(mask[x+1, y, z+1])
+    v6 = Float64(mask[x+1, y+1, z+1])
+    v7 = Float64(mask[x, y+1, z+1])
+
+    sx, sy, sz = spacing[1], spacing[2], spacing[3]
+    x0, x1 = (x - 1) * sx, x * sx
+    y0, y1 = (y - 1) * sy, y * sy
+    z0, z1 = (z - 1) * sz, z * sz
+
+    p0 = (x0, y0, z0)
+    p1 = (x1, y0, z0)
+    p2 = (x1, y1, z0)
+    p3 = (x0, y1, z0)
+    p4 = (x0, y0, z1)
+    p5 = (x1, y0, z1)
+    p6 = (x1, y1, z1)
+    p7 = (x0, y1, z1)
+
+    cidx = cube_indices[x, y, z] + 1
+
+    i = 1
+    triangle_number = 0
+    while i + 2 <= 16
+        e1 = casesClassic[cidx, i]
+        e1 == -1 && break
+        e2 = casesClassic[cidx, i+1]
+        e3 = casesClassic[cidx, i+2]
+
+        a = get_vert_on_edge(e1, p0, p1, p2, p3, p4, p5, p6, p7, v0, v1, v2, v3, v4, v5, v6, v7, isolevel)
+        b = get_vert_on_edge(e2, p0, p1, p2, p3, p4, p5, p6, p7, v0, v1, v2, v3, v4, v5, v6, v7, isolevel)
+        c = get_vert_on_edge(e3, p0, p1, p2, p3, p4, p5, p6, p7, v0, v1, v2, v3, v4, v5, v6, v7, isolevel)
+
+        triangles[triangles_idx[lin_idx]+triangle_number+1] = (a, b, c)
+
+        triangle_number += 1
+        i += 3
+    end
+
+    return nothing
+end

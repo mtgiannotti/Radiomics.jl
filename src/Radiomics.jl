@@ -7,9 +7,6 @@ using TOML
 using CUDA
 
 include("utils/utils_gpu/utils.jl")
-include("utils//utils_gpu/kernels.jl")
-include("utils/utils_gpu/features_gpu.jl")
-
 include("utils/utils_cpu/utils.jl")
 include("glcm_features.jl")
 include("first_order_features.jl")
@@ -20,6 +17,9 @@ include("ngtdm_features.jl")
 include("glrlm_features.jl")
 include("gldm_features.jl")
 include("diagnostic_features.jl")
+
+include("utils//utils_gpu/kernels.jl")
+include("utils/utils_gpu/features_gpu.jl")
 
 """
     extract_radiomic_features(img_input, mask_input, voxel_spacing_input;
@@ -579,13 +579,24 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
     if ndims(mask) == 3
         # 3D shape features
         if compute_all || :shape3d in features
-            t_shape3d_features = Threads.@spawn begin
-                result = @timed get_shape3d_features(
+            if use_gpu
+                t_shape3d_features = Threads.@spawn begin
+                    result = @timed get_shape3d_features(
+                        mask, voxel_spacing;
+                        verbose=verbose,
+                        keep_largest_only=keep_largest_only,
+                        gpu_data=gpu_data
+                    )
+                    (result.value, result.time)
+                end
+            else
+                result = @timed CUDA.@sync get_shape3d_features(
                     mask, voxel_spacing;
                     verbose=verbose,
-                    keep_largest_only=keep_largest_only
+                    keep_largest_only=keep_largest_only,
+                    gpu_data=gpu_data
                 )
-                (result.value, result.time)
+                t_shape3d_features = (result.value, result.time)
             end
         end
     end
