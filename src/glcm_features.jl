@@ -422,6 +422,7 @@ end
     - `bin_width`: The width of each bin (optional).
     - `weighting_norm`: The norm used for weighting the GLCM (optional), Weighting method ("infinity (Chebyshev)", "euclidean", "manhattan", "no_weighting", or nothing for no weighting)
     - `get_raw_matrices`: If true, returns one raw (unnormalized, unweighted) GLCM matrix per direction instead of the standard aggregated result.
+    - `gpu_data`: Optional object containing copies of the image, mask and ROI indices stored on the GPU. If provided, GPU acceleration is used.
     - `verbose`: If true, enables verbose output for debugging or detailed processing information.
     
     # Returns:

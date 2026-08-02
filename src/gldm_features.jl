@@ -19,6 +19,7 @@ using StatsBase
     - `get_raw_matrices`: If true, returns the raw GLDM matrix.
     - `gldm_a`: The alpha parameter for the GLDM calculation.
     - `verbose`: If true, prints progress messages.
+    - `gpu_data`: Optional object containing copies of the image, mask and ROI indices stored on the GPU. If provided, GPU acceleration is used.
 
     # Returns
     - A dictionary where keys are the feature names and values are the calculated feature values.
@@ -97,6 +98,7 @@ end
     - `mask`: The mask defining the region of interest.
     - `gldm_a`: The alpha parameter for the GLDM calculation.
     - `verbose`: If true, prints progress messages.
+    - `gpu_data`: Optional object containing copies of the image, mask and ROI indices stored on the GPU. If provided, GPU acceleration is used.
 
     # Returns
     - A tuple containing the GLDM matrix and the gray levels present in the ROI.

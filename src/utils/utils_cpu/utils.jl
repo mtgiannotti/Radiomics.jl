@@ -30,6 +30,7 @@ end
     - `img`: The input image (2D or 3D array).
     - `mask`: The binary mask defining the region of interest (same shape as `img`).
     - `verbose`: If `true`, prints the original and cropped sizes with reduction percentage.
+    - `use_gpu`: If `true`, performs CUDA compatibility checks and enables GPU acceleration when a supported GPU is available.
 
     # Returns
     - `cropped_img`: image array cropped to the bounding box of the mask.
