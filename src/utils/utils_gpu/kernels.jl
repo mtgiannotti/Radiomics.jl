@@ -912,6 +912,215 @@ function gldm_histogram_scatter!(
 end
 
 """
+    ngtdm_neighborhood_count_interior!(
+        discretized_img::CuDeviceArray{Int},
+        mask::CuDeviceArray{Bool},
+        interior_mask::CuDeviceArray{Int},
+        gl_map::CuDeviceArray{Int},
+        offsets_x::CuDeviceArray{Int},
+        offsets_y::CuDeviceArray{Int},
+        offsets_z::CuDeviceArray{Int},
+        P_ngtdm::CuDeviceArray{Float64},
+        Nx::Int,
+        Ny::Int,
+        Nz::Int,
+        min_gl::Int,
+        num_gl::Int,
+        num_interior::Int,
+        num_offsets::Int
+    )
+
+    Computes the NGTDM matrix  for interior ROI voxels.
+
+    # Arguments
+    - `discretized_img`: Discretized image stored on the GPU.
+    - `mask`: Binary ROI mask.
+    - `interior_mask`: List of interior ROI voxel indices.
+    - `gl_map`: Gray-level lookup table.
+    - `offsets_x`, `offsets_y`, `offsets_z`: offsets.
+    - `P_ngtdm`: Output NGTDM matrix.
+    - `Nx`, `Ny`, `Nz`: Image dimensions.
+    - `min_gl`: Minimum gray level.
+    - `num_gl`: Number of gray levels.
+    - `num_interior`: Number of interior ROI voxels.
+    - `num_offsets`: Number of offsets.
+
+    # Returns
+    Returns `nothing`. The NGTDM matrix is updated directly on the GPU.
+"""
+function ngtdm_neighborhood_count_interior!(
+    discretized_img::CuDeviceArray{Int},
+    mask::CuDeviceArray{Bool},
+    interior_mask::CuDeviceArray{Int},
+    gl_map::CuDeviceArray{Int},
+    offsets_x::CuDeviceArray{Int},
+    offsets_y::CuDeviceArray{Int},
+    offsets_z::CuDeviceArray{Int},
+    P_ngtdm::CuDeviceArray{Float64},
+    Nx::Int,
+    Ny::Int,
+    Nz::Int,
+    min_gl::Int,
+    num_gl::Int,
+    num_interior::Int,
+    num_offsets::Int,)
+
+    sh_counts = @cuDynamicSharedMem(Int, num_gl)
+    sh_sums = @cuDynamicSharedMem(Float64, num_gl, num_gl*sizeof(Int))
+
+    tid = threadIdx().x
+    i = tid + (blockIdx().x - 1) * blockDim().x
+
+    if tid <= num_gl
+        sh_counts[tid] = 0
+        sh_sums[tid] = 0.0
+    end
+
+    CUDA.sync_threads()
+
+    if i <= num_interior
+
+        idx = interior_mask[i]
+        x, y, z = decode_xyz(idx, Nx, Ny, Nz)
+
+        gl = discretized_img[idx]
+        gl_idx = gl_map[gl-min_gl+1]
+
+        neighborhood_sum = 0
+        neighborhood_count = 0
+
+        for o in 1:num_offsets
+            nx = x + offsets_x[o]
+            ny = y + offsets_y[o]
+            nz = z + offsets_z[o]
+            nidx = encode_xyz(nx, ny, nz, Nx, Ny)
+
+            if mask[nidx]
+                neighborhood_sum += discretized_img[nidx]
+                neighborhood_count += 1
+            end
+        end
+
+        if neighborhood_count > 0
+            neighborhood_avg = neighborhood_sum / neighborhood_count
+            CUDA.@atomic sh_counts[gl_idx] += 1
+            CUDA.@atomic sh_sums[gl_idx] += abs(gl - neighborhood_avg)
+        end
+    end
+
+    CUDA.sync_threads()
+
+    if tid <= num_gl
+        if sh_counts[tid] > 0
+            CUDA.@atomic P_ngtdm[tid, 1] += sh_counts[tid]
+            CUDA.@atomic P_ngtdm[tid, 2] += sh_sums[tid]
+            P_ngtdm[gl_idx, 3] = gl
+        end
+    end
+    return nothing
+end
+
+"""
+    ngtdm_neighborhood_count_border!(
+        discretized_img::CuDeviceArray{Int},
+        mask::CuDeviceArray{Bool},
+        border_mask::CuDeviceArray{Int},
+        gl_map::CuDeviceArray{Int},
+        offsets_x::CuDeviceArray{Int},
+        offsets_y::CuDeviceArray{Int},
+        offsets_z::CuDeviceArray{Int},
+        P_ngtdm::CuDeviceArray{Float64},
+        Nx::Int,
+        Ny::Int,
+        Nz::Int,
+        min_gl::Int,
+        num_gl::Int,
+        num_border::Int,
+        num_offsets::Int
+    )
+
+    Computes the NGTDM matrix for border ROI voxels.
+
+    # Arguments
+    - `discretized_img`: Discretized image stored on the GPU.
+    - `mask`: Binary ROI mask.
+    - `border_mask`: List of border ROI voxel indices.
+    - `gl_map`: Gray-level lookup table.
+    - `offsets_x`, `offsets_y`, `offsets_z`: offsets.
+    - `P_ngtdm`: Output NGTDM matrix.
+    - `Nx`, `Ny`, `Nz`: Image dimensions.
+    - `min_gl`: Minimum gray level.
+    - `num_gl`: Number of gray levels.
+    - `num_border`: Number of border ROI voxels.
+    - `num_offsets`: Number of offsets.
+
+    # Returns
+    Returns `nothing`. The NGTDM matrix is updated directly on the GPU.
+"""
+function ngtdm_neighborhood_count_border!(
+    discretized_img::CuDeviceArray{Int}, mask::CuDeviceArray{Bool}, border_mask::CuDeviceArray{Int}, gl_map::CuDeviceArray{Int}, offsets_x::CuDeviceArray{Int}, offsets_y::CuDeviceArray{Int}, offsets_z::CuDeviceArray{Int}, P_ngtdm::CuDeviceArray{Float64}, Nx::Int, Ny::Int, Nz::Int, min_gl::Int, num_gl::Int, num_border::Int, num_offsets::Int,)
+
+    sh_counts = @cuDynamicSharedMem(Int, num_gl)
+    sh_sums = @cuDynamicSharedMem(Float64, num_gl, num_gl*sizeof(Int))
+
+    tid = threadIdx().x
+    i = tid + (blockIdx().x - 1) * blockDim().x
+
+    if tid <= num_gl
+        sh_counts[tid] = 0
+        sh_sums[tid] = 0.0
+    end
+
+    CUDA.sync_threads()
+
+    if i <= num_border
+        idx = border_mask[i]
+
+        x, y, z = decode_xyz(idx, Nx, Ny, Nz)
+
+        gl = discretized_img[idx]
+        gl_idx = gl_map[gl-min_gl+1]
+
+        neighborhood_sum = 0
+        neighborhood_count = 0
+
+        for o in 1:num_offsets
+            nx = x + offsets_x[o]
+            ny = y + offsets_y[o]
+            nz = z + offsets_z[o]
+
+            if (1 <= nx <= Nx) && (1 <= ny <= Ny) && (1 <= nz <= Nz)
+                nidx = encode_xyz(nx, ny, nz, Nx, Ny)
+                if mask[nidx]
+                    neighborhood_sum += discretized_img[nidx]
+                    neighborhood_count += 1
+                end
+            end
+        end
+
+        if neighborhood_count > 0
+            neighborhood_avg = neighborhood_sum / neighborhood_count
+            CUDA.@atomic P_ngtdm[gl_idx, 1] += 1
+            CUDA.@atomic P_ngtdm[gl_idx, 2] += abs(gl - neighborhood_avg)
+            P_ngtdm[gl_idx, 3] = gl
+        end
+    end
+
+    CUDA.sync_threads()
+
+    if tid <= num_gl
+        if sh_counts[tid] > 0
+            CUDA.@atomic P_ngtdm[tid, 1] += sh_counts[tid]
+            CUDA.@atomic P_ngtdm[tid, 2] += sh_sums[tid]
+            P_ngtdm[gl_idx, 3] = gl
+        end
+    end
+    return nothing
+end
+
+
+
+"""
     calculate_cubeindex!(mask::CuDeviceArray{Bool},
                          cubeindex::CuDeviceArray{Int},
                          Nx::Int,
