@@ -1,4 +1,77 @@
 """
+    get_glrlm_features(img::AbstractArray{Float64},
+                       mask::BitArray,
+                       voxel_spacing::Vector{Float64};
+                       n_bins::Union{Int,Nothing}=nothing,
+                       bin_width::Union{Float64,Nothing}=nothing,
+                       weighting_norm::Union{String,Nothing}=nothing,
+                       get_raw_matrices::Bool=false,
+                       features_std::Bool=false,
+                       verbose::Bool=false,
+                       gpu_data::GPUData)
+
+    # Arguments
+    - `img`: Input image.
+    - `mask`: Binary ROI mask.
+    - `voxel_spacing`: Voxel spacing.
+    - `n_bins`: Number of gray level bins.
+    - `bin_width`: Width of the gray level bins.
+    - `weighting_norm`: Weighting norm used for GLRLM calculation.
+    - `get_raw_matrices`: Flag used to return the raw GLRLM matrices.
+    - `features_std`: Flag used to calculate the standard deviation of the GLRLM features.
+    - `verbose`: Flag used to print progress information.
+    - `gpu_data`: GPU data container
+
+    # Returns
+    GLRLM features
+"""
+function get_glrlm_features(img::AbstractArray{Float64},
+    mask::BitArray,
+    voxel_spacing::Vector{Float64};
+    n_bins::Union{Int,Nothing}=nothing,
+    bin_width::Union{Float64,Nothing}=nothing,
+    weighting_norm::Union{String,Nothing}=nothing,
+    get_raw_matrices::Bool=false,
+    features_std::Bool=false,
+    verbose::Bool=false,
+    gpu_data::GPUData)
+
+    P_glrlm, max_run = compute_glrlm_gpu(
+        gpu_data.texture_data.discretized_image,
+        gpu_data.mask,
+        gpu_data.mask_indices,
+        gpu_data.texture_data.gl_lut,
+        gpu_data.texture_data.num_gl,
+        gpu_data.texture_data.min_gl
+    )
+
+    P_glrlm, _ = Radiomics.calculate_glrlm_matrix(Array{Int64}(undef, size(gpu_data.texture_data.discretized_image)),
+        mask,
+        voxel_spacing,
+        weighting_norm,
+        verbose,
+        P_glrlm,
+        gpu_data.texture_data.gray_levels_cpu,
+        max_run
+    )
+
+    return Radiomics.get_glrlm_features(
+        img,
+        mask,
+        voxel_spacing;
+        n_bins=n_bins,
+        bin_width=bin_width,
+        weighting_norm=weighting_norm,
+        get_raw_matrices=get_raw_matrices,
+        features_std=features_std,
+        verbose=verbose,
+        P_glrlm=P_glrlm,
+        gray_levels=gpu_data.texture_data.gray_levels_cpu
+    )
+
+end
+
+"""
     compute_glrlm_gpu(
         mask::CuArray{Bool},
         mask_indices::CuArray{Int},
@@ -25,13 +98,11 @@
     - `Array{Float64}` containing the GLRLM 
     - `Int` actual max run
 """
-function compute_glrlm_gpu(mask::CuArray{Bool},
+function compute_glrlm_gpu(discretized_img::CuArray{Int},
+    mask::CuArray{Bool},
     mask_indices::CuArray{Int},
-    discretized_img::CuArray{Int},
-    gray_levels::CuArray{Int},
     gl_lut::CuArray{Int},
     num_gl::Int,
-    max_gl::Int,
     min_gl::Int)::Tuple{Array{Float64},Int}
     dim = ndims(discretized_img)
 

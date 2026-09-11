@@ -13,8 +13,9 @@ function get_glrlm_features(img::AbstractArray{Float64},
     weighting_norm::Union{String,Nothing}=nothing,
     get_raw_matrices::Bool=false,
     features_std::Bool=false,
-    gpu_data::Union{GPUData,Nothing}=nothing,
-    verbose::Bool=false)::Dict{String,Any}
+    verbose::Bool=false,
+    P_glrlm::Union{Array{Float64},Nothing}=nothing,
+    gray_levels::Union{Array{Int},Nothing}=nothing)::Dict{String,Any}
 
     if verbose
         if !isnothing(n_bins)
@@ -34,19 +35,12 @@ function get_glrlm_features(img::AbstractArray{Float64},
 
     glrlm_features = Dict{String,Any}()
 
-    # Assuming discretize_image is defined in utils.jl or globally available within the module
-    if gpu_data !== nothing
-        if gpu_data.texture_data === nothing
-            discretized_img, n_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
-            gpu_data.texture_data = texture_data
-        end
-        discretized_img = gpu_data.texture_data.discretized_image
-        gray_levels = gpu_data.texture_data.gray_levels
-    else
-        discretized_img, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
-    end
+    if P_glrlm === nothing
+        # Assuming discretize_image is defined in utils.jl or globally available within the module
+        discretized_img, n_bins_actual, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
 
-    P_glrlm, angles = calculate_glrlm_matrix(discretized_img, mask, voxel_spacing, weighting_norm, gray_levels, verbose, gpu_data)
+        P_glrlm, angles = calculate_glrlm_matrix(discretized_img, mask, voxel_spacing, weighting_norm, verbose)
+    end
 
     if get_raw_matrices
         if verbose
@@ -70,7 +64,7 @@ function get_glrlm_features(img::AbstractArray{Float64},
         "LongRunHighGrayLevelEmphasis"
     ]
 
-    extracted_features = gpu_data === nothing ? extract_all_glrlm_features(P_glrlm, gray_levels, feature_names; features_std=features_std) : extract_all_glrlm_features(P_glrlm, Vector{Int64}(Array(gray_levels)), feature_names; features_std=features_std)
+    extracted_features = extract_all_glrlm_features(P_glrlm, gray_levels, feature_names; features_std=features_std)
     merge!(glrlm_features, extracted_features)
 
     if verbose
@@ -88,19 +82,16 @@ const Angle = Union{Tuple{Int,Int},Tuple{Int,Int,Int}}
     Calculates the GLRLM matrix. Tracks the real maximum run length 
     dynamically to eliminate downstream computations on empty trailing columns.
 """
-function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
+function calculate_glrlm_matrix(discretized_img::Array{Int},
     mask::BitArray,
     voxel_spacing::Vector{Float64},
     weighting_norm::Union{String,Nothing},
-    gray_levels::AbstractArray{Int},
     verbose::Bool,
-    gpu_data::Union{GPUData,Nothing}=nothing)::Tuple{Array{Float64,3},Vector{Angle}}
-    if verbose
-        println("Calculating GLRLM matrix...")
-    end
+    P_glrlm::Union{Array{Float64},Nothing}=nothing,
+    gray_levels::Union{Array{Int},Nothing}=nothing,
+    actual_max_run::Union{Int,Nothing}=nothing)::Tuple{Array{Float64,3},Vector{Angle}}
 
     dim = ndims(discretized_img)
-
     if dim == 2
         angles = [
             (1, 0), (0, 1), (1, 1), (1, -1),
@@ -118,7 +109,11 @@ function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
 
     num_angles = length(angles)
 
-    if gpu_data === nothing
+    if P_glrlm === nothing
+        if verbose
+            println("Calculating GLRLM matrix...")
+        end
+
         masked_img = discretized_img[mask]
         gray_levels = sort(unique(masked_img))
         num_gl = length(gray_levels)
@@ -130,8 +125,6 @@ function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
         end
 
         max_run_length_possible = maximum(size(discretized_img))
-
-        num_angles = length(angles)
         P_glrlm = zeros(Float64, num_gl, max_run_length_possible, num_angles)
 
         cart_indices = CartesianIndices(size(discretized_img))
@@ -174,9 +167,6 @@ function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
 
         # Crop the matrix to the actual maximum run length found
         P_glrlm = P_glrlm[:, 1:actual_max_run, :]
-
-    else
-        P_glrlm, actual_max_run = compute_glrlm_gpu(gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.discretized_image, gpu_data.texture_data.gray_levels, gpu_data.texture_data.gl_lut, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
     end
 
     if !isnothing(weighting_norm)

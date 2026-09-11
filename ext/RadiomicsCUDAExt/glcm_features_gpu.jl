@@ -1,13 +1,84 @@
 """
+    get_glcm_features(img::AbstractArray{Float64},
+                      mask::BitArray,
+                      voxel_spacing::Vector{Float64};
+                      n_bins::Union{Int,Nothing}=nothing,
+                      bin_width::Union{Float64,Nothing}=nothing,
+                      weighting_norm::Union{String,Nothing}=nothing,
+                      get_raw_matrices::Bool=false,
+                      features_std::Bool=false,
+                      verbose::Bool=false,
+                      gpu_data::GPUData)
+
+    Compute GLCM features using GPU-accelerated GLCM calculation.
+
+    # Arguments
+    - `img`: Input image.
+    - `mask`: Binary ROI mask.
+    - `voxel_spacing`: Voxel spacing.
+    - `n_bins`: Number of gray level bins.
+    - `bin_width`: Width of the gray level bins.
+    - `weighting_norm`: Weighting norm used for GLCM calculation.
+    - `get_raw_matrices`: Flag used to return the raw GLCM matrices.
+    - `features_std`: Flag used to calculate the standard deviation of the GLCM features.
+    - `verbose`: Flag used to print progress information.
+    - `gpu_data`: GPU data container
+
+    # Returns
+    GLCM features
+"""
+function get_glcm_features(img::AbstractArray{Float64},
+    mask::BitArray,
+    voxel_spacing::Vector{Float64};
+    n_bins::Union{Int,Nothing}=nothing,
+    bin_width::Union{Float64,Nothing}=nothing,
+    weighting_norm::Union{String,Nothing}=nothing,
+    get_raw_matrices::Bool=false,
+    features_std::Bool=false,
+    verbose::Bool=false,
+    gpu_data::GPUData)
+
+    G_all = compute_glcm_gpu(
+        gpu_data.texture_data.discretized_image,
+        gpu_data
+    )
+
+    glcm_matrices, _ = Radiomics.calculate_glcm(img,
+        mask,
+        voxel_spacing;
+        n_bins=n_bins,
+        bin_width=bin_width,
+        weighting_norm=weighting_norm,
+        verbose=verbose,
+        G_all=G_all,
+        gray_levels=gpu_data.texture_data.gray_levels_cpu,
+        bin_width_used=gpu_data.texture_data.bin_width,
+        n_bins_actual=gpu_data.texture_data.n_bins)
+
+    return Radiomics.get_glcm_features(
+        img,
+        mask,
+        voxel_spacing;
+        n_bins=n_bins,
+        bin_width=bin_width,
+        weighting_norm=weighting_norm,
+        get_raw_matrices=get_raw_matrices,
+        features_std=features_std,
+        verbose=verbose,
+        glcm_matrices=glcm_matrices,
+        gray_levels=gpu_data.texture_data.gray_levels_cpu
+    )
+end
+
+
+"""
     compute_glcm_gpu(disc::CuArray{Int}, 
-                    gray_levels::CuArray{Int}, 
                     gpu_data::GPUData)::Array{Float64}
 
     Compute the Gray Level Co-occurrence Matrix (GLCM) on the GPU.
 
     # Arguments
     - `disc`: Discretized image stored on the GPU.
-    - `gray_levels`: Gray levels.
     - `gpu_data`: GPU data container containing:
         - `gpu_data.img`: Original image stored on the GPU.
         - `gpu_data.mask`: ROI mask stored on the GPU.
@@ -21,7 +92,6 @@
     - Symmetrization is performed on the CPU after GPU computation.
 """
 function compute_glcm_gpu(disc::CuArray{Int},
-    gray_levels::CuArray{Int},
     gpu_data::GPUData)::Array{Float64}
     dim = ndims(disc)
 

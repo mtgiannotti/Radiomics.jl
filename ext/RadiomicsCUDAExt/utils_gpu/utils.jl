@@ -15,6 +15,8 @@ mutable struct TextureData
     num_gl::Int
     max_gl::Int
     min_gl::Int
+    n_bins::Union{Int,Nothing}
+    bin_width::Union{Real,Nothing}
 end
 
 mutable struct GPUData
@@ -224,7 +226,7 @@ function discretize_image_gpu(img_cpu::AbstractArray{Float64},
     bin_width::Union{<:Real,Nothing}=nothing,
     vmin::Union{Float64,Nothing}=nothing,
     vmax::Union{Float64,Nothing}=nothing,
-    verbose_timing::Bool=true)::Tuple{CuArray{Int},Int,Float64,TextureData}
+    verbose_timing::Bool=true)::TextureData
 
 
     if length(gpu_data.mask_indices) == 0
@@ -265,7 +267,7 @@ function discretize_image_gpu(img_cpu::AbstractArray{Float64},
         n_bins_actual = n_bins
     else
         bin_width_used = bin_width
-        inv_bin_width = 1.0f0 / bin_width_used
+        inv_bin_width = 1.0 / bin_width_used
         bin_offset = Int(floor(vmin * inv_bin_width))
 
         blocks = cld(n_of_indices, CUDA_THREADS)
@@ -283,9 +285,9 @@ function discretize_image_gpu(img_cpu::AbstractArray{Float64},
     gray_levels = unique_gpu(masked, max_gl)
     gray_levels_cpu = Array(gray_levels)
 
-    texture_data = TextureData(disc, gray_levels, create_lut(gray_levels_cpu, max_gl, min_gl), gray_levels_cpu, length(gray_levels), max_gl, min_gl)
+    texture_data = TextureData(disc, gray_levels, create_lut(gray_levels_cpu, max_gl, min_gl), gray_levels_cpu, length(gray_levels), max_gl, min_gl, n_bins_actual, bin_width_used)
 
-    return disc, n_bins_actual, bin_width_used, texture_data
+    return texture_data
 end
 
 function unique_gpu(img::CuArray{T}, max_gl::Int)::CuArray{T} where {T}

@@ -1,7 +1,8 @@
 using LinearAlgebra
 using Statistics
+
 """ 
-    function calculate_glcm(img::Array{Float64,3}, mask::BitArray{3}, spacing::Vector{Float64}; n_bins::Union{Int,Nothing}=nothing, bin_width::Union{Float64,Nothing}=nothing, use_gpu::Bool=false, img_gpu::Union{CuArray,Nothing}=nothing, mask_gpu::Union{CuArray,Nothing}=nothing, mask_indices_gpu::Union{CuArray,Nothing}=nothing, verbose::Bool=false)
+    function calculate_glcm(img::Array{Float64,3}, mask::BitArray{3}, spacing::Vector{Float64}; n_bins::Union{Int,Nothing}=nothing, bin_width::Union{Float64,Nothing}=nothing, verbose::Bool=false, G_all::Union{Float64,Nothing}=nothing)
 
     Calculates the Gray Level Co-occurrence Matrix (GLCM) for a 3D image within a specified mask.
     You can specify EITHER n_bins OR bin_width, but not both.
@@ -13,8 +14,9 @@ using Statistics
         - `n_bins`: The number of bins for discretizing intensity values (optional).
         - `bin_width`: The width of each bin (optional).
         - `weighting_norm`: The norm used for weighting the GLCM (optional), Weighting method ("infinity (Chebyshev)", "euclidean", "manhattan", "no_weighting", or nothing for no weighting)
-        - `gpu_data`: Optional object containing copies of the image, mask and ROI indices stored on the GPU. If provided, GPU acceleration is used.
         - `verbose`: If true, enables verbose output for debugging or detailed processing information.
+        - `G_all`:
+        - `gray_levels`:
 
     # Returns:
         - `glcm_matrices`: A vector of GLCM matrices calculated for each direction.
@@ -27,20 +29,13 @@ function calculate_glcm(img::AbstractArray{Float64},
     n_bins::Union{Int,Nothing}=nothing,
     bin_width::Union{Float64,Nothing}=nothing,
     weighting_norm::Union{String,Nothing}=nothing,
-    gpu_data::Union{GPUData,Nothing}=nothing,
-    verbose::Bool=false)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
-    if gpu_data !== nothing
-        if gpu_data.texture_data === nothing
-            disc, n_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
-            gpu_data.texture_data = texture_data
-        end
-        disc = gpu_data.texture_data.discretized_image
-        gray_levels = gpu_data.texture_data.gray_levels
-    else
-        disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
-    end
+    verbose::Bool=false,
+    G_all::Union{Array{Float64},Nothing}=nothing,
+    gray_levels::Union{Array{Int},Nothing}=nothing,
+    bin_width_used::Union{<:Real,Nothing}=nothing,
+    n_bins_actual::Union{Int,Nothing}=nothing)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
 
-    dim = ndims(disc)
+    dim = ndims(img)
     dirs = dim == 2 ?
            [(1, 0), (0, 1), (1, 1), (1, -1)] :
            [
@@ -50,27 +45,29 @@ function calculate_glcm(img::AbstractArray{Float64},
         (1, -1, 1), (-1, 1, 1)
     ]
 
-    if verbose
-        if !isnothing(n_bins)
-            println("Calculating GLCM ($(dim)D) with $(n_bins) bins...")
-        elseif !isnothing(bin_width)
-            println("Calculating GLCM ($(dim)D) with bin_width=$(bin_width)...")
-        else
-            println("Calculating GLCM ($(dim)D) with default bin_width=25...")
-        end
-
-        println(dim == 2 ? "2D image detected. Using $(length(dirs)) directions." :
-                "3D image detected. Using $(length(dirs)) directions.")
-        if weighting_norm !== nothing
-            println("Weighting norm applied: $(weighting_norm)")
-        end
-    end
-
-    Ng = length(gray_levels)
     glcm_matrices = Vector{Matrix{Float64}}()
-    if gpu_data === nothing
+    sizehint!(glcm_matrices, length(dirs))
+    # if G_all is nothing, the call to the function wasn't made from the GPU extension. If it's not nothing, G_all has already been calculated on the GPU
+    if G_all === nothing
+        disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+
+        if verbose
+            if !isnothing(n_bins)
+                println("Calculating GLCM ($(dim)D) with $(n_bins) bins...")
+            elseif !isnothing(bin_width)
+                println("Calculating GLCM ($(dim)D) with bin_width=$(bin_width)...")
+            else
+                println("Calculating GLCM ($(dim)D) with default bin_width=25...")
+            end
+
+            println(dim == 2 ? "2D image detected. Using $(length(dirs)) directions." :
+                    "3D image detected. Using $(length(dirs)) directions.")
+            if weighting_norm !== nothing
+                println("Weighting norm applied: $(weighting_norm)")
+            end
+        end
+
         Ng = length(gray_levels)
-        sizehint!(glcm_matrices, length(dirs))
 
         min_gl = Int(minimum(gray_levels))
         max_gl = Int(maximum(gray_levels))
@@ -104,8 +101,6 @@ function calculate_glcm(img::AbstractArray{Float64},
                 end
             end
         end
-    else
-        G_all = compute_glcm_gpu(gpu_data.texture_data.discretized_image, gpu_data.texture_data.gray_levels, gpu_data)
     end
 
     weights = ones(Float64, length(dirs))
@@ -151,7 +146,6 @@ function calculate_glcm(img::AbstractArray{Float64},
         glcm_matrices = [summed_glcm]
     end
 
-    gpu_data !== nothing ? gray_levels = Array(gray_levels) : gray_levels
     return glcm_matrices, gray_levels, bin_width_used
 end
 
@@ -427,7 +421,6 @@ end
     - `bin_width`: The width of each bin (optional).
     - `weighting_norm`: The norm used for weighting the GLCM (optional), Weighting method ("infinity (Chebyshev)", "euclidean", "manhattan", "no_weighting", or nothing for no weighting)
     - `get_raw_matrices`: If true, returns one raw (unnormalized, unweighted) GLCM matrix per direction instead of the standard aggregated result.
-    - `gpu_data`: Optional object containing copies of the image, mask and ROI indices stored on the GPU. If provided, GPU acceleration is used.
     - `verbose`: If true, enables verbose output for debugging or detailed processing information.
     
     # Returns:
@@ -454,15 +447,18 @@ function get_glcm_features(img::AbstractArray{Float64},
     weighting_norm::Union{String,Nothing}=nothing,
     features_std::Bool=false,
     get_raw_matrices::Bool=false,
-    gpu_data::Union{GPUData,Nothing}=nothing,
-    verbose::Bool=false)::Dict{String,Any}
+    verbose::Bool=false,
+    glcm_matrices::Union{Vector{Matrix{Float64}},Nothing}=nothing,
+    gray_levels::Union{Array{Int},Nothing}=nothing)::Dict{String,Any}
 
-    glcm_matrices, gray_levels, bin_width_used = calculate_glcm(img, mask, voxel_spacing;
-        n_bins=n_bins,
-        bin_width=bin_width,
-        weighting_norm=weighting_norm,
-        gpu_data=gpu_data,
-        verbose=verbose)
+    # if glcm_matrices is nothing, the call to the function wasn't made from the GPU extension. If it's not nothing, the GLCM has already been calculated on the GPU
+    if glcm_matrices === nothing
+        glcm_matrices, gray_levels, bin_width_used = calculate_glcm(img, mask, voxel_spacing;
+            n_bins=n_bins,
+            bin_width=bin_width,
+            weighting_norm=weighting_norm,
+            verbose=verbose)
+    end
 
     if isempty(glcm_matrices)
         return Dict{String,Any}()
@@ -504,10 +500,12 @@ function get_glcm_features(img::AbstractArray{Float64},
             if features_std
                 sums_sq[name] += val^2
                 if val < mins[name]
-                    mins[name] = val
+                    ;
+                    mins[name] = val;
                 end
                 if val > maxs[name]
-                    maxs[name] = val
+                    ;
+                    maxs[name] = val;
                 end
             end
         end

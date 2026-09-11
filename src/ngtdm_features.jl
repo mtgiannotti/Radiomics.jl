@@ -39,7 +39,8 @@ function get_ngtdm_features(img::AbstractArray{Float64},
     bin_width::Union{Float64,Nothing}=nothing,
     get_raw_matrices::Bool=false,
     verbose::Bool=false,
-    gpu_data::Union{GPUData,Nothing}=nothing)::Dict{String,Any}
+    P_ngtdm::Union{Array{Float64},Nothing}=nothing,
+    gray_levels::Union{Array{Int},Nothing}=nothing)::Dict{String,Any}
     if verbose
         if !isnothing(n_bins)
             println("NGTDM calculation with $(n_bins) bins...")
@@ -51,22 +52,13 @@ function get_ngtdm_features(img::AbstractArray{Float64},
     end
 
     ngtdm_features = Dict{String,Any}()
+    if P_ngtdm === nothing
+        # 1. Discretize the image
+        discretized_img, n_bins_actual, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
 
-    # 1. Discretize the image
-    if gpu_data !== nothing
-        if gpu_data.texture_data === nothing
-            discretized_img, n_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
-            gpu_data.texture_data = texture_data
-        end
-        discretized_img = gpu_data.texture_data.discretized_image
-        gray_levels = gpu_data.texture_data.gray_levels
-    else
-        discretized_img, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+        # 2. Calculate the NGTDM matrix
+        P_ngtdm, gray_levels = calculate_ngtdm_matrix(discretized_img, mask, verbose)
     end
-
-    # 2. Calculate the NGTDM matrix
-    P_ngtdm, gray_levels = calculate_ngtdm_matrix(discretized_img, mask, gray_levels, verbose, gpu_data)
-
     if get_raw_matrices
         if verbose
             println("=================================")
@@ -109,14 +101,15 @@ end
     # Returns
     - A tuple containing the NGTDM matrix and the gray levels present in the ROI.
     """
-function calculate_ngtdm_matrix(discretized_img::AbstractArray{Int},
+function calculate_ngtdm_matrix(discretized_img::Array{Int},
     mask::BitArray,
-    gray_levels::AbstractArray{Int},
     verbose::Bool,
-    gpu_data::Union{GPUData,Nothing}=nothing)::Tuple{Matrix{Float64},Vector{Int}}
+    P_ngtdm::Union{Array{Float64},Nothing}=nothing,
+    gray_levels::Union{Array{Int},Nothing}=nothing)::Tuple{Matrix{Float64},Vector{Int}}
 
-    verbose && println("Calculating NGTDM matrix...")
-    if gpu_data === nothing
+    if P_ngtdm === nothing
+        verbose && println("Calculating NGTDM matrix...")
+
         masked_img = discretized_img[mask]
         gray_levels = sort(unique(masked_img))
         num_gl = length(gray_levels)
@@ -199,9 +192,6 @@ function calculate_ngtdm_matrix(discretized_img::AbstractArray{Int},
                 P_ngtdm[gl_idx, 3] = gl
             end
         end
-    else
-        gray_levels = gpu_data.texture_data.gray_levels_cpu
-        P_ngtdm = compute_ngtdm_gpu(gpu_data.texture_data.discretized_image, gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.gray_levels, gray_levels, gpu_data.texture_data.gl_lut, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
     end
 
     return P_ngtdm, gray_levels

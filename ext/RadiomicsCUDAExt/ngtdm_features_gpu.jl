@@ -1,4 +1,71 @@
 """
+    get_ngtdm_features(img::AbstractArray{Float64},
+                       mask::BitArray,
+                       voxel_spacing::Vector{Float64};
+                       n_bins::Union{Int,Nothing}=nothing,
+                       bin_width::Union{Float64,Nothing}=nothing,
+                       get_raw_matrices::Bool=false,
+                       verbose::Bool=false,
+                       gpu_data::GPUData)
+
+    # Arguments
+    - `img`: Input image.
+    - `mask`: Binary ROI mask.
+    - `voxel_spacing`: Voxel spacing.
+    - `n_bins`: Number of gray level bins.
+    - `bin_width`: Width of the gray level bins.
+    - `get_raw_matrices`: Flag used to return the raw NGTDM matrices.
+    - `verbose`: Flag used to print progress information.
+    - `gpu_data`: GPU data container
+
+    # Returns
+    NGTDM features
+"""
+function get_ngtdm_features(img::AbstractArray{Float64},
+    mask::BitArray,
+    voxel_spacing::Vector{Float64};
+    n_bins::Union{Int,Nothing}=nothing,
+    bin_width::Union{Float64,Nothing}=nothing,
+    get_raw_matrices::Bool=false,
+    verbose::Bool=false,
+    gpu_data::GPUData)::Dict{String,Any}
+
+    P_ngtdm = compute_ngtdm_gpu(
+        gpu_data.texture_data.discretized_image,
+        gpu_data.mask,
+        gpu_data.mask_indices,
+        gpu_data.texture_data.gray_levels,
+        gpu_data.texture_data.gray_levels_cpu,
+        gpu_data.texture_data.gl_lut,
+        gpu_data.texture_data.num_gl,
+        gpu_data.texture_data.max_gl,
+        gpu_data.texture_data.min_gl
+    )
+
+    P_ngtdm, _ = Radiomics.calculate_ngtdm_matrix(
+        [0],
+        mask,
+        verbose,
+        P_ngtdm,
+        gpu_data.texture_data.gray_levels_cpu,
+    )
+
+    return Radiomics.get_ngtdm_features(
+        img,
+        mask,
+        voxel_spacing;
+        n_bins=n_bins,
+        bin_width=bin_width,
+        get_raw_matrices=get_raw_matrices,
+        verbose=verbose,
+        P_ngtdm=P_ngtdm,
+        gray_levels=gpu_data.texture_data.gray_levels_cpu
+    )
+
+end
+
+
+"""
     compute_ngtdm_gpu(discretized_img::CuArray{Int},
         mask::CuArray{Bool},
         mask_indices::CuArray{Int},
@@ -186,11 +253,13 @@ function ngtdm_neighborhood_count_interior!(
 
     CUDA.sync_threads()
 
-    if tid <= num_gl
-        if sh_counts[tid] > 0
-            CUDA.@atomic P_ngtdm[tid, 1] += sh_counts[tid]
-            CUDA.@atomic P_ngtdm[tid, 2] += sh_sums[tid]
+    g = tid
+    while g <= num_gl
+        if sh_counts[g] > 0
+            CUDA.@atomic P_ngtdm[g, 1] += sh_counts[g]
+            CUDA.@atomic P_ngtdm[g, 2] += sh_sums[g]
         end
+        g += blockDim().x
     end
     return nothing
 end
@@ -284,11 +353,13 @@ function ngtdm_neighborhood_count_border!(
 
     CUDA.sync_threads()
 
-    if tid <= num_gl
-        if sh_counts[tid] > 0
-            CUDA.@atomic P_ngtdm[tid, 1] += sh_counts[tid]
-            CUDA.@atomic P_ngtdm[tid, 2] += sh_sums[tid]
+    g = tid
+    while g <= num_gl
+        if sh_counts[g] > 0
+            CUDA.@atomic P_ngtdm[g, 1] += sh_counts[g]
+            CUDA.@atomic P_ngtdm[g, 2] += sh_sums[g]
         end
+        g += blockDim().x
     end
     return nothing
 end
