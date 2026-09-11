@@ -16,7 +16,7 @@ StructUtils = "ec057cc2-7a8d-4b58-b3b3-92acb9f63b42"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[weakdep]
+[weakdeps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 
 [extensions]
