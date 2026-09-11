@@ -29,9 +29,13 @@ function calculate_glcm(img::AbstractArray{Float64},
     weighting_norm::Union{String,Nothing}=nothing,
     gpu_data::Union{GPUData,Nothing}=nothing,
     verbose::Bool=false)::Tuple{Vector{Matrix{Float64}},Vector{Int},Float64}
-    if gpu_data !== nothing && gpu_data.texture_data === nothing
-        disc, n_levels, gray_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
-        gpu_data.texture_data = texture_data
+    if gpu_data !== nothing
+        if gpu_data.texture_data === nothing
+            disc, n_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
+            gpu_data.texture_data = texture_data
+        end
+        disc = gpu_data.texture_data.discretized_image
+        gray_levels = gpu_data.texture_data.gray_levels
     else
         disc, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
     end

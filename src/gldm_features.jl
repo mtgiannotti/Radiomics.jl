@@ -57,13 +57,13 @@ function get_gldm_features(img::AbstractArray{Float64},
 
     if gpu_data !== nothing
         if gpu_data.texture_data === nothing
-            disc, n_levels, gray_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
+            discretized_img, n_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
             gpu_data.texture_data = texture_data
         end
         discretized_img = gpu_data.texture_data.discretized_image
         gray_levels = gpu_data.texture_data.gray_levels
     else
-        discretized_img, n_bins_actual, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+        discretized_img, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
     end
     P_gldm, gray_levels = calculate_gldm_matrix(discretized_img, mask, gray_levels, gldm_a, verbose, gpu_data)
 
@@ -197,7 +197,8 @@ function calculate_gldm_matrix(discretized_img::AbstractArray{Int},
         end
         P_gldm = P_gldm[:, 1:last_col]
     else
-        P_gldm, gray_levels = compute_gldm_gpu(gpu_data.texture_data.discretized_image, gpu_data.mask, gpu_data.mask_indices, gray_levels, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl, gldm_a)
+        P_gldm = compute_gldm_gpu(gpu_data.texture_data.discretized_image, gpu_data.mask, gpu_data.mask_indices, gray_levels, gpu_data.texture_data.gl_lut, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl, gldm_a)
+        gray_levels = gpu_data.texture_data.gray_levels_cpu
     end
 
     return P_gldm, gray_levels

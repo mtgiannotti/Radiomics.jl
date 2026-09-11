@@ -37,13 +37,13 @@ function get_glrlm_features(img::AbstractArray{Float64},
     # Assuming discretize_image is defined in utils.jl or globally available within the module
     if gpu_data !== nothing
         if gpu_data.texture_data === nothing
-            disc, n_levels, gray_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
+            discretized_img, n_levels, bin_width_used, texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
             gpu_data.texture_data = texture_data
         end
         discretized_img = gpu_data.texture_data.discretized_image
         gray_levels = gpu_data.texture_data.gray_levels
     else
-        discretized_img, n_bins_actual, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
+        discretized_img, n_levels, gray_levels, bin_width_used = discretize_image(img, mask; n_bins=n_bins, bin_width=bin_width)
     end
 
     P_glrlm, angles = calculate_glrlm_matrix(discretized_img, mask, voxel_spacing, weighting_norm, gray_levels, verbose, gpu_data)
@@ -176,7 +176,7 @@ function calculate_glrlm_matrix(discretized_img::AbstractArray{Int},
         P_glrlm = P_glrlm[:, 1:actual_max_run, :]
 
     else
-        P_glrlm, actual_max_run = compute_glrlm_gpu(gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.discretized_image, gpu_data.texture_data.gray_levels, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
+        P_glrlm, actual_max_run = compute_glrlm_gpu(gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.discretized_image, gpu_data.texture_data.gray_levels, gpu_data.texture_data.gl_lut, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
     end
 
     if !isnothing(weighting_norm)

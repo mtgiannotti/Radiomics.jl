@@ -3,6 +3,7 @@
         mask::CuArray{Bool},
         mask_indices::CuArray{Int},
         gray_levels::CuArray{Int},
+        gl_lut::CuArray{Int},
         num_gl::Int,
         max_gl::Int,
         min_gl::Int,
@@ -15,6 +16,7 @@
     - `mask`: ROI mask stored on the GPU.
     - `mask_indices`: Linear indices of ROI voxels.
     - `gray_levels`: Array containing all gray levels
+    - `gl_lut`: Gray level look up table
     - `num_gl`: Number of gray levels 
     - `max_gl`: Maximum gray level 
     - `min_gl`: Minimum gray level
@@ -30,15 +32,11 @@ function compute_gldm_gpu(
     mask::CuArray{Bool},
     mask_indices::CuArray{Int},
     gray_levels::CuArray{Int},
+    gl_lut::CuArray{Int},
     num_gl::Int,
     max_gl::Int,
     min_gl::Int,
-    gldm_a::Int)::Tuple{Matrix{Int},Array{Int}}
-
-    gl_lut = CUDA.zeros(Int, max_gl - min_gl + 1)
-
-    @cuda threads = CUDA_THREADS blocks = cld(num_gl, CUDA_THREADS) lut_kernel!(
-        gray_levels, gl_lut, min_gl, num_gl)
+    gldm_a::Int)::Matrix{Int}
 
     n_dims = ndims(discretized_img)
     sz = size(discretized_img)
@@ -98,7 +96,7 @@ function compute_gldm_gpu(
     last_col = findlast(col_has_data_cpu)
     last_col = last_col === nothing ? 0 : last_col
     P_gldm = P_gldm[:, 1:last_col]
-    return Array(P_gldm), Array(gray_levels)
+    return Array(P_gldm)
 end
 
 """

@@ -740,7 +740,7 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
             else
                 if cuda_streams
                     shape2d_stream = CUDA.CuStream()
-                    t_shape3d_features = Threads.@spawn CUDA.stream!(shape2d_stream) do
+                    t_shape2d_features = Threads.@spawn CUDA.stream!(shape2d_stream) do
                         result = @timed begin
                             r = get_shape2d_features(
                                 mask, voxel_spacing;
@@ -1084,13 +1084,13 @@ end
             verbose=false
         )
         if CUDA.functional()
-            disc, _, gray_levels, _, texture_data = discretize_image_gpu(img_small, mask_cpu, gpu_data)
+            disc, _, _, texture_data = discretize_image_gpu(img_small, mask_cpu, gpu_data)
             gpu_data.texture_data = texture_data
 
             compute_glcm_gpu(gpu_data.texture_data.discretized_image, gpu_data.texture_data.gray_levels, gpu_data)
-            compute_gldm_gpu(gpu_data.texture_data.discretized_image, gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.gray_levels, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl, 1)
-            compute_glrlm_gpu(gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.discretized_image, gpu_data.texture_data.gray_levels, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
-            compute_ngtdm_gpu(gpu_data.texture_data.discretized_image, gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.gray_levels, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
+            compute_gldm_gpu(gpu_data.texture_data.discretized_image, gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.gray_levels, gpu_data.texture_data.gl_lut, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl, 1)
+            compute_glrlm_gpu(gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.discretized_image, gpu_data.texture_data.gray_levels, gpu_data.texture_data.gl_lut, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
+            compute_ngtdm_gpu(gpu_data.texture_data.discretized_image, gpu_data.mask, gpu_data.mask_indices, gpu_data.texture_data.gray_levels, gpu_data.texture_data.gray_levels_cpu, gpu_data.texture_data.gl_lut, gpu_data.texture_data.num_gl, gpu_data.texture_data.max_gl, gpu_data.texture_data.min_gl)
 
             get_shape3d_features(mask_cpu, spacing; verbose=false, keep_largest_only=false, gpu_data=gpu_data)
         end

@@ -367,7 +367,7 @@ function calculate_diam2d_gpu(triangles::CuArray{Triangle3D}, verbose::Bool)::Po
 
     @cuda threads = CUDA_THREADS blocks = cld(num_triangles, CUDA_THREADS) all_verts_kernel!(triangles, all_verts, num_triangles)
 
-    all_verts = unique_gpu(all_verts)
+    all_verts = CuArray(unique!(Array(all_verts)))
 
     diam2d = maximum_2d_diameters_from_vertices_gpu(all_verts)
 

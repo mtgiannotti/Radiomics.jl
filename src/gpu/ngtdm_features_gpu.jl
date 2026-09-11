@@ -3,6 +3,8 @@
         mask::CuArray{Bool},
         mask_indices::CuArray{Int},
         gray_levels::CuArray{Int},
+        gray_levels_cpu::Array{Int},
+        gl_lut::CuArray{Int},
         num_gl::Int,
         max_gl::Int,
         min_gl::Int)::Tuple{Array{Float64},Array{Int}}
@@ -14,6 +16,8 @@
     - `mask`: Binary ROI mask stored on the GPU.
     - `mask_indices`: Linear indices of ROI voxels.
     - `gray_levels`: Array containing all gray levels
+    - `gray_levels_cpu`: Array containing all gray levels stored in CPU memory
+    - `gl_lut`: Gray level look up table
     - `num_gl`: Number of gray levels 
     - `max_gl`: Maximum gray level 
     - `min_gl`: Minimum gray level
@@ -27,14 +31,11 @@ function compute_ngtdm_gpu(discretized_img::CuArray{Int},
     mask::CuArray{Bool},
     mask_indices::CuArray{Int},
     gray_levels::CuArray{Int},
+    gray_levels_cpu::Array{Int},
+    gl_lut::CuArray{Int},
     num_gl::Int,
     max_gl::Int,
-    min_gl::Int)::Tuple{Array{Float64},Array{Int}}
-
-    gl_lut = CUDA.zeros(Int, max_gl - min_gl + 1)
-
-    @cuda threads = CUDA_THREADS blocks = cld(num_gl, CUDA_THREADS) lut_kernel!(
-        gray_levels, gl_lut, min_gl, num_gl)
+    min_gl::Int)::Array{Float64}
 
     n_dims = ndims(discretized_img)
     sz = size(discretized_img)
@@ -54,8 +55,8 @@ function compute_ngtdm_gpu(discretized_img::CuArray{Int},
     num_offsets = length(offsets_x)
 
     num_indices = length(mask_indices)
-    is_interior = CUDA.zeros(Bool, num_indices)
-    is_border = CUDA.ones(Bool, num_indices)
+    is_interior = CuArray{Bool}(undef, num_indices)
+    is_border = CuArray{Bool}(undef, num_indices)
     interior_length = CuArray([0])
     @cuda threads = CUDA_THREADS blocks = cld(num_indices, CUDA_THREADS) classify_mask_indices!(mask_indices, is_interior, is_border, interior_length, Nx, Ny, Nz, num_indices)
 
@@ -80,9 +81,8 @@ function compute_ngtdm_gpu(discretized_img::CuArray{Int},
     @cuda threads = CUDA_THREADS blocks = cld(n_bord, CUDA_THREADS) shmem = shmem_size ngtdm_neighborhood_count_border!(discretized_img, mask, border_mask, gl_lut, offsets_x, offsets_y, offsets_z, P_ngtdm, Nx, Ny, Nz, min_gl, num_gl, n_bord, num_offsets)
 
     P_ngtdm = Array(P_ngtdm)
-    gray_levels = Array(gray_levels)
-    P_ngtdm[:, 3] = gray_levels
-    return P_ngtdm, gray_levels
+    P_ngtdm[:, 3] = gray_levels_cpu
+    return P_ngtdm
 end
 
 """

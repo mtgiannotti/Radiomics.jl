@@ -4,6 +4,7 @@
         mask_indices::CuArray{Int},
         discretized_img::CuArray{Int},
         gray_levels::CuArray{Int},
+        gl_lut::CuArray{Int},
         num_gl::Int,
         max_gl::Int,
         min_gl::Int)::Array{Float64}
@@ -15,6 +16,7 @@
     - `mask_indices`: Linear indices of valid ROI voxels.
     - `discretized_img`: Discretized image stored on the GPU.
     - `gray_levels`: Array containing all gray levels
+    - `gl_lut`: Gray level look up table
     - `num_gl`: Number of gray levels 
     - `max_gl`: Maximum gray level 
     - `min_gl`: Minimum gray level
@@ -27,6 +29,7 @@ function compute_glrlm_gpu(mask::CuArray{Bool},
     mask_indices::CuArray{Int},
     discretized_img::CuArray{Int},
     gray_levels::CuArray{Int},
+    gl_lut::CuArray{Int},
     num_gl::Int,
     max_gl::Int,
     min_gl::Int)::Tuple{Array{Float64},Int}
@@ -42,13 +45,9 @@ function compute_glrlm_gpu(mask::CuArray{Bool},
         angles_z = CuArray([0, 0, 0, 0, 1, -1, 0, 0, 0, 0, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1])
     end
 
-    gl_lut = CUDA.zeros(Int, max_gl - min_gl + 1)
-
     Nx, Ny = size(discretized_img)
     Nz = (dim == 3) ? size(discretized_img, 3) : 1
     num_indices = length(mask_indices)
-
-    @cuda threads = CUDA_THREADS blocks = cld(num_gl, CUDA_THREADS) lut_kernel!(gray_levels, gl_lut, min_gl, num_gl)
 
     max_run_length_possible = maximum(size(discretized_img))
 
