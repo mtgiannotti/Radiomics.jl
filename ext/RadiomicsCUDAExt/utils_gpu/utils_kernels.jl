@@ -21,7 +21,6 @@
     # Caller functions:
     - `init_gpu` in `utils/utils_gpu/utils.jl`
 """
-
 function findall_kernel!(mask::CuDeviceArray{Bool},
     idx::CuDeviceArray{Int},
     valid_idx::CuDeviceArray{Int32},
@@ -56,7 +55,6 @@ end
     # Caller functions:
     - `unique_gpu` in `utils/utils_gpu/utils.jl`
 """
-
 function assign_uniques!(img::CuDeviceArray{T},
     is_boundary::CuDeviceArray{Int32},
     counter::CuDeviceArray{Int},
@@ -89,7 +87,6 @@ end
     # Caller functions:
     - `unique_gpu.jl` in `utils/utils_gpu/utils.jl`
 """
-
 function set_boundaries!(x::CuDeviceArray{T},
     is_boundary::CuDeviceArray{Int32},
     num_of_uniques::CuDeviceArray{Int}) where T
@@ -127,7 +124,6 @@ end
     # Caller functions:
     - `apply_mask` in `utils/utils_gpu/utils.jl`
 """
-
 function assign!(img::CuDeviceArray{Int},
     mask_indices::CuDeviceArray{Int},
     roi::CuDeviceArray{Int},
