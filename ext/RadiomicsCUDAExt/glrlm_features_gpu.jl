@@ -182,7 +182,6 @@ end
     Returns `nothing`. The GLRLM matrix `P_glrlm` and the maximum run length
     `actual_max_run` are modified directly on the GPU.
 """
-
 function glrlm_kernel!(
     img::CuDeviceArray{Int},
     mask::CuDeviceArray{Bool},

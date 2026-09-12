@@ -4,6 +4,10 @@ using StatsBase
     get_glrlm_features with weighting support
 
     Calculates and returns a dictionary of GLRLM (Gray Level Run Length Matrix) features.
+
+    # Notes
+    `P_glrlm`, `gray_levels` are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the GLRLM matrix on the CPU. 
+    If GLRLM features are being extracted on the CPU, these values are computed inside this function
 """
 function get_glrlm_features(img::AbstractArray{Float64},
     mask::BitArray,
@@ -81,6 +85,10 @@ const Angle = Union{Tuple{Int,Int},Tuple{Int,Int,Int}}
 
     Calculates the GLRLM matrix. Tracks the real maximum run length 
     dynamically to eliminate downstream computations on empty trailing columns.
+
+    # Notes
+    `P_glrlm`, `gray_levels` are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the GLRLM matrix on the CPU. 
+    If GLRLM features are being extracted on the CPU, these values are computed inside this function
 """
 function calculate_glrlm_matrix(discretized_img::Array{Int},
     mask::BitArray,
@@ -152,8 +160,8 @@ function calculate_glrlm_matrix(discretized_img::Array{Int},
                 run_length = 1
                 next_idx_cart = curr_idx_cart + c_angle
                 while checkbounds(Bool, discretized_img, next_idx_cart) &&
-                          mask[next_idx_cart] &&
-                          discretized_img[next_idx_cart] == gl
+                    mask[next_idx_cart] &&
+                    discretized_img[next_idx_cart] == gl
                     run_length += 1
                     next_idx_cart += c_angle
                 end
@@ -324,12 +332,12 @@ function extract_all_glrlm_features(P_glrlm::Array{Float64,3},
             if features_std
                 feature_sums_sq[i] += angle_vals[i]^2
                 if angle_vals[i] < feature_min[i]
-                    ;
-                    feature_min[i] = angle_vals[i];
+
+                    feature_min[i] = angle_vals[i]
                 end
                 if angle_vals[i] > feature_max[i]
-                    ;
-                    feature_max[i] = angle_vals[i];
+
+                    feature_max[i] = angle_vals[i]
                 end
             end
         end

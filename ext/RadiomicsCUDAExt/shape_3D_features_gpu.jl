@@ -70,7 +70,6 @@ end
     # Returns
     Returns `nothing`. Vertices are stored directly on the GPU.
 """
-
 function all_verts_kernel!(
     triangles::CuDeviceArray{Triangle3D},
     all_verts::CuDeviceArray{Point3D},

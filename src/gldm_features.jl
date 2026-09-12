@@ -19,6 +19,12 @@ using StatsBase
     - `get_raw_matrices`: If true, returns the raw GLDM matrix.
     - `gldm_a`: The alpha parameter for the GLDM calculation.
     - `verbose`: If true, prints progress messages.
+    - `P_gldm`: GLDM matrix computed on the GPU.
+    - `gray_levels`: Gray levels computed on the GPU
+
+    # Notes
+    `P_gldm`, `gray_levels` are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the GLDM matrix on the CPU. 
+    If GLDM features are being extracted on the CPU, these values are computed inside this function
 
     # Returns
     - A dictionary where keys are the feature names and values are the calculated feature values.
@@ -87,7 +93,9 @@ end
     calculate_gldm_matrix(discretized_img::Array{Int},
                                 mask::BitArray,
                                 gldm_a::Int,
-                                verbose::Bool)::Tuple{Matrix{Int}, Vector{Int}}
+                                verbose::Bool,
+                                P_gldm::Union{Matrix{Int},Nothing}=nothing,
+                                gray_levels::Union{Array{Int},Nothing}=nothing)::Tuple{Matrix{Int}, Vector{Int}}
 
     Calculates the Gray Level Dependence Matrix (GLDM).
 
@@ -96,9 +104,15 @@ end
     - `mask`: The mask defining the region of interest.
     - `gldm_a`: The alpha parameter for the GLDM calculation.
     - `verbose`: If true, prints progress messages.
+    - `P_gldm`: GLDM matrix computed on the GPU.
+    - `gray_levels`: Gray levels computed on the GPU
 
     # Returns
     - A tuple containing the GLDM matrix and the gray levels present in the ROI.
+    
+    # Notes
+    `P_gldm`, `gray_levels` are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the GLDM matrix on the CPU. 
+    If GLDM features are being extracted on the CPU, these values are computed inside this function
 """
 function calculate_gldm_matrix(discretized_img::Array{Int},
     mask::BitArray,

@@ -2,7 +2,11 @@ using LinearAlgebra
 using Statistics
 
 """ 
-    function calculate_glcm(img::Array{Float64,3}, mask::BitArray{3}, spacing::Vector{Float64}; n_bins::Union{Int,Nothing}=nothing, bin_width::Union{Float64,Nothing}=nothing, verbose::Bool=false, G_all::Union{Float64,Nothing}=nothing)
+    function calculate_glcm(img::Array{Float64,3}, mask::BitArray{3}, spacing::Vector{Float64}; n_bins::Union{Int,Nothing}=nothing, bin_width::Union{Float64,Nothing}=nothing, verbose::Bool=false, 
+    G_all::Union{Float64,Nothing}=nothing, 
+    gray_levels::Union{Array{Int},Nothing}=nothing,
+    bin_width_used::Union{<:Real,Nothing}=nothing,
+    n_bins_actual::Union{Int,Nothing}=nothing)
 
     Calculates the Gray Level Co-occurrence Matrix (GLCM) for a 3D image within a specified mask.
     You can specify EITHER n_bins OR bin_width, but not both.
@@ -15,8 +19,14 @@ using Statistics
         - `bin_width`: The width of each bin (optional).
         - `weighting_norm`: The norm used for weighting the GLCM (optional), Weighting method ("infinity (Chebyshev)", "euclidean", "manhattan", "no_weighting", or nothing for no weighting)
         - `verbose`: If true, enables verbose output for debugging or detailed processing information.
-        - `G_all`:
-        - `gray_levels`:
+        - `G_all`: G matrix calculated on the GPU
+        - `gray_levels`: Gray levels calculated on the GPU
+        - `bin_width_used`: The bin width used for discretization coming from the CUDA extension
+        - `n_bins_actual`: The number of bins used for discretization coming from the CUDA extension 
+
+    # Notes:
+    `G_all`, `gray_levels`, `bin_width_used`, `n_bins_actual` are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the GLCM matrix on the CPU. 
+    If GLCM features are being extracted on the CPU, these values are computed inside this function
 
     # Returns:
         - `glcm_matrices`: A vector of GLCM matrices calculated for each direction.
@@ -403,7 +413,7 @@ end
 
 """
     get_glcm_features(img, mask, voxel_spacing; n_bins, bin_width, weighting_norm,
-                      get_raw_matrices, verbose)
+                      get_raw_matrices, verbose, glcm_matrices, gray_levels)
 
     Calculates GLCM matrices for a 2D or 3D image, extracts texture features from each matrix,
     and returns the mean values of all features across directions.
@@ -422,6 +432,12 @@ end
     - `weighting_norm`: The norm used for weighting the GLCM (optional), Weighting method ("infinity (Chebyshev)", "euclidean", "manhattan", "no_weighting", or nothing for no weighting)
     - `get_raw_matrices`: If true, returns one raw (unnormalized, unweighted) GLCM matrix per direction instead of the standard aggregated result.
     - `verbose`: If true, enables verbose output for debugging or detailed processing information.
+    - `glcm_matrices`: GLCM matrices computed on the GPU. 
+    - `gray_levels`: Gray levels comptued on the GPU.
+
+    # Notes:
+    `glcm_matrices`, `gray_levels`, are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the GLCM matrix on the CPU. 
+    If GLCM features are being extracted on the CPU, these values are computed inside this function
     
     # Returns:
     - `feats`: A dictionary containing the mean GLCM features across all directions.
@@ -500,12 +516,12 @@ function get_glcm_features(img::AbstractArray{Float64},
             if features_std
                 sums_sq[name] += val^2
                 if val < mins[name]
-                    ;
-                    mins[name] = val;
+
+                    mins[name] = val
                 end
                 if val > maxs[name]
-                    ;
-                    maxs[name] = val;
+
+                    maxs[name] = val
                 end
             end
         end

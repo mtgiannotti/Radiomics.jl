@@ -88,6 +88,8 @@ function extract_radiomic_features(img_input, mask_input, voxel_spacing_input;
         verbose
     )
 
+    (!use_gpu && cuda_streams) && @warn "Ambiguous initialization: ignoring cuda_streams because use_gpu is set to false. CUDA streams are only available when running on the GPU. Defaulting to the CPU"
+
     compute_all = isempty(p.features) || :all in p.features
 
     # Management slices_2d
@@ -467,20 +469,17 @@ function _compute_radiomics_impl(img::Array{Float64}, mask::BitArray, voxel_spac
     if !use_gpu
         # GLCM features
         if compute_all || :glcm in features
-            if !use_gpu
-                t_glcm_features = Threads.@spawn begin
-                    result = @timed get_glcm_features(
-                        img, mask, voxel_spacing;
-                        n_bins=n_bins,
-                        bin_width=bin_width,
-                        weighting_norm=weighting_norm,
-                        features_std=features_std,
-                        get_raw_matrices=get_raw_matrices,
-                        verbose=verbose
-                    )
-                    (result.value, result.time)
-                end
-            else
+            t_glcm_features = Threads.@spawn begin
+                result = @timed get_glcm_features(
+                    img, mask, voxel_spacing;
+                    n_bins=n_bins,
+                    bin_width=bin_width,
+                    weighting_norm=weighting_norm,
+                    features_std=features_std,
+                    get_raw_matrices=get_raw_matrices,
+                    verbose=verbose
+                )
+                (result.value, result.time)
             end
         end
 

@@ -1,7 +1,7 @@
 using StatsBase
 
 """
-    get_ngtdm_features(img, mask, voxel_spacing; n_bins=nothing, bin_width=nothing, verbose=false)
+    get_ngtdm_features(img, mask, voxel_spacing; n_bins=nothing, bin_width=nothing, verbose=false, P_ngtdm=nothing, gray_levels=nothing)
 
     Calculates and returns a dictionary of NGTDM (Neighbouring Gray Tone Difference Matrix) features.
 
@@ -9,6 +9,10 @@ using StatsBase
     - If n_bins is specified, bin_width is calculated automatically from the intensity range
     - If bin_width is specified, the number of bins depends on the intensity range
     - If neither is specified, defaults to n_bins=32
+
+    # Notes
+    `P_ngtdm`, `gray_levels` are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the NGTDM matrix on the CPU. 
+    If NGTDM features are being extracted on the CPU, do not pass any of these as these values are computed inside this function
 
     # Arguments
     - `img`: The input image.
@@ -89,9 +93,13 @@ function get_ngtdm_features(img::AbstractArray{Float64},
 end
 
 """
-    calculate_ngtdm_matrix(discretized_img, mask, verbose)
+    calculate_ngtdm_matrix(discretized_img, mask, verbose, P_ngtdm=nothing, gray_levels=nothing)
 
     Calculates the Neighbouring Gray Tone Difference Matrix (NGTDM).
+
+    # Notes
+    `P_ngtdm`, `gray_levels` are passed only when they have been computed by the CUDA extension, in order to perform additional calculations on the NGTDM matrix on the CPU. 
+    If NGTDM features are being extracted on the CPU, do not pass any of these as these values are computed inside this function
 
     # Arguments
     - `discretized_img`: The discretized input image.

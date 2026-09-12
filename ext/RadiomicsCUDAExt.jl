@@ -39,7 +39,6 @@ include("RadiomicsCUDAExt/gldm_features_gpu.jl")
     # Returns:
     - Tuple of (radiomic_features::Dict, total_time_accumulated::Float64)
 """
-
 function Radiomics.extract_radiomics_features_gpu(
     features::Vector{Symbol},
     img::Array{Float64},
@@ -55,8 +54,6 @@ function Radiomics.extract_radiomics_features_gpu(
     cuda_streams::Bool=false,
     verbose::Bool=false)
 
-    println(weighting_norm)
-
     t_glcm_features = t_gldm_features = t_glrlm_features = t_ngtdm_features = nothing
 
     img_gpu = mask_gpu = mask_indices_gpu = nothing
@@ -68,10 +65,20 @@ function Radiomics.extract_radiomics_features_gpu(
         gpu_data.texture_data = discretize_image_gpu(img, mask, gpu_data; n_bins=n_bins, bin_width=bin_width)
     end
 
+    if cuda_streams
+        if CUDA.attribute(CUDA.device(), CUDA.DEVICE_ATTRIBUTE_CONCURRENT_KERNELS) == 1
+            @info "The active GPU supports concurrent kernel execution. However, enabling cuda_streams does not guarantee that kernels will execute concurrently and may lead to GPU saturation, slowing down execution. It is recommended to use CUDA streams on a GPU with sufficient resources (streaming multiprocessors, available registers per SM, shared memeory per SM)."
+        else
+            @warn "The active GPU does not support concurrent kernel execution. Disabling CUDA streams"
+            cuda_streams = false
+        end
+    end
+
     if compute_all || :glcm in features
         if cuda_streams
             glcm_stream = CUDA.CuStream()
             t_glcm_features = Threads.@spawn CUDA.stream!(glcm_stream) do
+                verbose && println("[GLCM CUDA stream] extracting GLCM features on the GPU")
                 result = @timed begin
                     r = get_glcm_features(
                         img, mask, voxel_spacing;
@@ -84,6 +91,7 @@ function Radiomics.extract_radiomics_features_gpu(
                         verbose=verbose
                     )
                     CUDA.synchronize(glcm_stream)
+                    verbose && println("[GLCM CUDA stream] GLCM feature extraction complete")
                     r
                 end
                 (result.value, result.time)
@@ -107,6 +115,7 @@ function Radiomics.extract_radiomics_features_gpu(
         if cuda_streams
             ngtdm_stream = CUDA.CuStream()
             t_ngtdm_features = Threads.@spawn CUDA.stream!(ngtdm_stream) do
+                verbose && println("[NGTDM CUDA stream] extracting NGTDM features on the GPU")
                 result = @timed begin
                     r = get_ngtdm_features(
                         img, mask, voxel_spacing;
@@ -117,6 +126,8 @@ function Radiomics.extract_radiomics_features_gpu(
                         verbose=verbose
                     )
                     CUDA.synchronize(ngtdm_stream)
+                    verbose && println("[NGTDM CUDA stream] NGTDM feature extraction complete")
+
                     r
                 end
                 (result.value, result.time)
@@ -138,6 +149,7 @@ function Radiomics.extract_radiomics_features_gpu(
         if cuda_streams
             glrlm_stream = CUDA.CuStream()
             t_glrlm_features = Threads.@spawn CUDA.stream!(glrlm_stream) do
+                verbose && println("[GLRLM CUDA stream] extracting GLRLM features on the GPU")
                 result = @timed begin
                     r = get_glrlm_features(
                         img, mask, voxel_spacing;
@@ -150,6 +162,8 @@ function Radiomics.extract_radiomics_features_gpu(
                         verbose=verbose
                     )
                     CUDA.synchronize(glrlm_stream)
+                    verbose && println("[GLRLM CUDA stream] GLRLM feature extraction complete")
+
                     r
                 end
                 (result.value, result.time)
@@ -175,6 +189,7 @@ function Radiomics.extract_radiomics_features_gpu(
         if cuda_streams
             gldm_stream = CUDA.CuStream()
             t_gldm_features = Threads.@spawn CUDA.stream!(gldm_stream) do
+                verbose && println("[GLDM CUDA stream] extracting GLDM features on the GPU")
                 result = @timed begin
                     r = get_gldm_features(
                         img, mask, voxel_spacing;
@@ -185,6 +200,7 @@ function Radiomics.extract_radiomics_features_gpu(
                         gpu_data=gpu_data
                     )
                     CUDA.synchronize(gldm_stream)
+                    verbose && println("[GLDM CUDA stream] GLDM feature extraction complete")
                     r
                 end
                 (result.value, result.time)
